@@ -72,8 +72,10 @@ with a `Choice` classification primitive); OpenRouter just serves it at
 
 ## Install (Safari 15.4+)
 
-The Safari version uses the same manifest, JavaScript, HTML, and CSS as Chrome, so
-its filtering, settings, cache, popup, and blocked page behave identically.
+The Safari version uses the same JavaScript, HTML, and CSS as Chrome, so its
+filtering, settings, cache, popup, and blocked page behave identically. The
+packaging script removes Safari's unsupported `options_ui.open_in_tab` preference
+from its staged manifest only.
 
 ### Temporary development install
 
@@ -90,13 +92,18 @@ Safari removes temporary extensions after 24 hours or when Safari quits.
 Install the full Xcode app, then run:
 
 ```sh
-./scripts/package-safari.sh
+BUNDLE_IDENTIFIER=com.example.Focus ./scripts/package-safari.sh
 ```
 
 This creates a macOS host app and Xcode project under `build/safari`. Open the
 generated project, select your development team if signing is required, and run
 the **Focus (macOS)** scheme. Enable Focus and grant **All Websites** access in
 Safari's extension settings.
+
+Use a unique reverse-DNS `BUNDLE_IDENTIFIER` ending in `.Focus` that belongs to
+your Apple developer account. The script refuses to overwrite an existing output
+directory so it does not discard Xcode signing configuration. To generate a fresh
+project, remove the old output directory and run the command again.
 
 The script stages only extension runtime files and asks Apple's
 `safari-web-extension-packager` (or its older `safari-web-extension-converter` name)
