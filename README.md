@@ -48,13 +48,14 @@ with a `Choice` classification primitive); OpenRouter just serves it at
 
 | File | Purpose |
 |---|---|
-| `manifest.json` | MV3 manifest (Chrome + Firefox), permissions, options page |
+| `manifest.json` | Shared MV3 manifest (Chrome, Firefox, and Safari), permissions, options page |
 | `background.js` | Navigation interception, Jev classification, caching, blocking |
 | `popup.html` / `popup.js` | Toolbar popup: current-site verdict, enable toggle, allow/block, re-check |
 | `options.html` / `options.js` | **Extension dialog: OpenRouter API key**, model, threshold, lists, cache |
-| `blocked.html` / `blocked.js` | Block interstitial with allow-once / always-allow |
+| `blocked.html` / `blocked.js` | Block interstitial |
 | `styles.css` | Shared dark theme |
 | `icons/` | Extension icons |
+| `scripts/package-safari.sh` | Generates the macOS Safari host app and Xcode project |
 
 ## Install (Chrome / Edge / Brave)
 
@@ -69,14 +70,48 @@ with a `Choice` classification primitive); OpenRouter just serves it at
 1. Open `about:debugging#/runtime/this-firefox` → **Load Temporary Add-on** → pick `manifest.json`.
 2. Open Add-ons → Focus → **Preferences** to set the API key.
 
+## Install (Safari 15.4+)
+
+The Safari version uses the same manifest, JavaScript, HTML, and CSS as Chrome, so
+its filtering, settings, cache, popup, and blocked page behave identically.
+
+### Temporary development install
+
+1. In Safari, open **Settings → Advanced** and enable **Show features for web developers**.
+2. Open **Settings → Developer**, enable **Allow unsigned extensions**, then click
+   **Add Temporary Extension…** and select this `Focus` folder.
+3. Open **Settings → Extensions → Focus** and allow access to **All Websites**.
+4. Open the Focus toolbar popup and configure the API key as above.
+
+Safari removes temporary extensions after 24 hours or when Safari quits.
+
+### Build a macOS app
+
+Install the full Xcode app, then run:
+
+```sh
+./scripts/package-safari.sh
+```
+
+This creates a macOS host app and Xcode project under `build/safari`. Open the
+generated project, select your development team if signing is required, and run
+the **Focus (macOS)** scheme. Enable Focus and grant **All Websites** access in
+Safari's extension settings.
+
+The script stages only extension runtime files and asks Apple's
+`safari-web-extension-packager` (or its older `safari-web-extension-converter` name)
+to generate the native wrapper. The wrapper is generated rather than committed so
+all browsers continue to share one behavior implementation.
+
 ## Configure
 
 - **Model:** `typesafe/jev-1.13` (pinned, default) or `~typesafe/jev-latest` (auto-update).
 - **Threshold:** minimum `P(distracting)` to block. Lower = stricter.
 - **Allowlist / blocklist:** one domain per line, `www.` stripped, subdomains match.
-- **Cache:** per-domain verdicts cached 7 days; "allow once" caches 1 hour.
+- **Cache:** per-domain verdicts are cached for 7 days.
 
 ## Privacy
 
 - The API key is stored in `chrome.storage.sync` and sent only to `https://openrouter.ai`.
+  Safari implements this storage area locally but does not sync it between devices.
 - Each new domain sends `{ domain, full URL, page title }` as Jev `state`. No page content is sent.
