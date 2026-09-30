@@ -10,7 +10,6 @@
     h1 { font-size: 16px; margin: 0 0 4px; }
     .domain { font-weight: 700; word-break: break-all; }
     .actions { display: grid; gap: 8px; margin-top: 12px; }
-    .switch-row { display: flex; justify-content: space-between; align-items: center; margin-top: 10px; }
   </style>
 </head>
 <body>
@@ -22,10 +21,6 @@
       <div class="domain" id="domain">(unknown)</div>
       <div style="margin-top:6px"><span class="pill warn" id="verdict">checking…</span></div>
       <div class="muted" id="detail" style="margin-top:6px"></div>
-    </div>
-    <div class="switch-row">
-      <span>Blocking enabled</span>
-      <input type="checkbox" id="enabled" />
     </div>
     <div class="actions">
       <button id="allow">Always allow this domain</button>

@@ -18,18 +18,13 @@ async function refresh() {
   const verdictEl = document.getElementById("verdict");
   const detailEl = document.getElementById("detail");
   const keyStatusEl = document.getElementById("keyStatus");
-  const enabledEl = document.getElementById("enabled");
-
   const settings = await chrome.storage.sync.get({
     openrouterApiKey: "",
-    enabled: true,
     threshold: 0.6,
     model: "typesafe/jev-1.13",
     allowlist: [],
     blocklist: [],
   });
-  enabledEl.checked = settings.enabled !== false;
-
   const domain = tab?.url ? hostnameOf(tab.url) : "";
   domainEl.textContent = domain || "(not a web page)";
 
@@ -89,11 +84,6 @@ async function modifyList(listName, domain, add) {
 
 document.addEventListener("DOMContentLoaded", () => {
   refresh();
-
-  document.getElementById("enabled").addEventListener("change", async (e) => {
-    await chrome.storage.sync.set({ enabled: e.target.checked });
-    refresh();
-  });
 
   document.getElementById("allow").addEventListener("click", async () => {
     const tab = await getActiveTab();
