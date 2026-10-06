@@ -16,6 +16,8 @@ export interface Classification {
 
 export interface CachedClassification extends Classification {
   timestamp: number;
+  /** Epoch ms after which the entry is stale. Defaults to timestamp + cache TTL. */
+  expiresAt?: number;
 }
 
 export interface Settings {
@@ -26,6 +28,10 @@ export interface Settings {
   model: string;
   allowlist: string[];
   blocklist: string[];
+  /** Reuse earlier Jev verdicts to save API calls. Default: true. */
+  cacheEnabled?: boolean;
+  /** Lifetime of a cached Jev verdict. Default: 7 days. */
+  cacheTtlMs?: number;
 }
 
 export interface CacheStore {

@@ -25,7 +25,9 @@ async function getSettings() {
     model: DEFAULT_MODEL,
     allowlist: [],
     blocklist: [],
+    cacheEnabled: true,
   });
+  sync.cacheEnabled = sync.cacheEnabled !== false;
   // Options page stores one domain per line; the library wants arrays.
   sync.allowlist = normalizeDomainList(sync.allowlist);
   sync.blocklist = normalizeDomainList(sync.blocklist);

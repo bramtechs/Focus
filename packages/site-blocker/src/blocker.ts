@@ -11,6 +11,8 @@ import type {
 
 export const CACHE_TTL_MS = 7 * 24 * 60 * 60 * 1000; // 7 days per domain
 const ALLOW_ONCE_MS = 60 * 60 * 1000; // 1 hour
+/** After a failed Jev call, reuse the fallback verdict this long instead of retrying every navigation. */
+export const ERROR_TTL_MS = 5 * 60 * 1000;
 
 export interface SiteBlockerOptions {
   /** Current settings; called on every check so changes apply immediately. */
@@ -96,6 +98,23 @@ export function createSiteBlocker(options: SiteBlockerOptions): SiteBlocker {
     }
   }
 
+  function isUsable(c: CachedClassification, settings: Settings): boolean {
+    if (c.source === "allow-once") return now() < (c.expiresAt ?? 0);
+    if (settings.cacheEnabled === false) return false;
+    // A fallback verdict is only a stand-in until a key is set; never prefer it over Jev.
+    if (c.source === "fallback" && settings.openrouterApiKey && !c.error) return false;
+    return now() < (c.expiresAt ?? (c.timestamp || 0) + CACHE_TTL_MS);
+  }
+
+  function toCacheEntry(r: Classification, settings: Settings): CachedClassification | null {
+    if (settings.cacheEnabled === false) return null;
+    // The free offline heuristic has nothing to save, so don't cache it.
+    if (r.source === "fallback" && !r.error) return null;
+    const ttl = r.error ? ERROR_TTL_MS : settings.cacheTtlMs ?? CACHE_TTL_MS;
+    const t = now();
+    return { ...r, timestamp: t, expiresAt: t + ttl };
+  }
+
   const isBlocking = (c: Classification, threshold: number) =>
     c.verdict === "distracting" &&
     Number(c.distractingProbability ?? c.probability ?? 0) >= threshold;
@@ -130,9 +149,9 @@ export function createSiteBlocker(options: SiteBlockerOptions): SiteBlocker {
         };
       }
 
-      // Fresh cache hit?
+      // Fresh cache hit? (Caching is on by default; allow-once always applies.)
       const cached = await options.cache.get(domain);
-      if (cached && now() - (cached.timestamp || 0) < CACHE_TTL_MS) {
+      if (cached && isUsable(cached, settings)) {
         return isBlocking(cached, settings.threshold)
           ? { action: "block", domain, classification: cached, fresh: false }
           : { action: "allow", reason: "classified", domain, classification: cached, fresh: false };
@@ -145,8 +164,8 @@ export function createSiteBlocker(options: SiteBlockerOptions): SiteBlocker {
         fresh = true;
         task = (async () => {
           const result = await classify(domain, input, settings);
-          const entry: CachedClassification = { ...result, timestamp: now() };
-          await options.cache.set(domain, entry);
+          const entry = toCacheEntry(result, settings);
+          if (entry) await options.cache.set(domain, entry);
           return { result, fresh: true };
         })().finally(() => inflight.delete(domain));
         inflight.set(domain, task);
@@ -169,8 +188,8 @@ export function createSiteBlocker(options: SiteBlockerOptions): SiteBlocker {
         confidence: 1,
         model: "allow-once",
         source: "allow-once",
-        // Back-date so the entry expires ALLOW_ONCE_MS from now.
-        timestamp: now() - CACHE_TTL_MS + ALLOW_ONCE_MS,
+        timestamp: now(),
+        expiresAt: now() + ALLOW_ONCE_MS,
       });
     },
 

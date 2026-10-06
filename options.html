@@ -44,6 +44,11 @@
       <div class="muted">Lower = stricter (blocks more). Higher = lenient.</div>
     </div>
 
+    <div>
+      <label><input type="checkbox" id="cacheEnabled" checked /> Cache Jev verdicts (saves API calls)</label>
+      <div class="muted">On by default. Each domain is classified once and reused for 7 days.</div>
+    </div>
+
     <div class="row">
       <button id="test">Test API key</button>
       <span class="muted" id="testResult"></span>
