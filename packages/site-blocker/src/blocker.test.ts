@@ -100,12 +100,11 @@ test("caching is on by default: repeat visits don't call Jev", async () => {
   assert.equal(calls, 1);
 });
 
-test("cacheEnabled=false calls Jev every time and stores nothing", async () => {
+test("cacheEnabled=false stores nothing (only same-burst duplicates are merged)", async () => {
   let calls = 0;
   const { blocker, cache } = mk({ openrouterApiKey: "k", cacheEnabled: false }, { fetch: async () => (calls++, new Response(JSON.stringify(jevBody))) });
   await blocker.check({ url: "https://a.example/" });
-  await blocker.check({ url: "https://a.example/" });
-  assert.equal(calls, 2);
+  assert.equal(calls, 1); // same-burst duplicate events still share one call
   assert.equal(cache.map.size, 0);
 });
 
