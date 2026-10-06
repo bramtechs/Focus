@@ -26,6 +26,7 @@ STAGING=$(mktemp -d "${TMPDIR:-/tmp}/focus-safari.XXXXXX")
 trap 'rm -rf "$STAGING"' EXIT HUP INT TERM
 
 mkdir -p "$STAGING/icons"
+(cd "$ROOT" && npm run build >&2)
 cp "$ROOT/manifest.json" "$STAGING/"
 cp "$ROOT/background.js" "$ROOT/blocked.html" "$ROOT/blocked.js" "$STAGING/"
 cp "$ROOT/options.html" "$ROOT/options.js" "$ROOT/popup.html" "$ROOT/popup.js" "$STAGING/"

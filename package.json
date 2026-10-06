@@ -1,0 +1,16 @@
+{
+  "name": "focus-extension",
+  "private": true,
+  "workspaces": ["packages/*"],
+  "scripts": {
+    "build:lib": "npm run build -w @focus/site-blocker",
+    "build": "npm run build:lib && esbuild src/background.js --bundle --format=iife --target=es2022 --outfile=background.js",
+    "test": "npm test -w @focus/site-blocker"
+  },
+  "devDependencies": {
+    "esbuild": "^0.24.0"
+  },
+  "dependencies": {
+    "@focus/site-blocker": "*"
+  }
+}

@@ -122,3 +122,10 @@ all browsers continue to share one behavior implementation.
 - The API key is stored in `chrome.storage.sync` and sent only to `https://openrouter.ai`.
   Safari implements this storage area locally but does not sync it between devices.
 - Each new domain sends `{ domain, full URL, page title }` as Jev `state`. No page content is sent.
+
+## Development
+
+The blocking logic lives in the TypeScript library `packages/site-blocker`
+(`@focus/site-blocker`). The extension's `src/background.js` is thin browser glue
+that is bundled into `background.js` (gitignored) — run `npm install && npm run build`
+before loading the extension unpacked. `npm test` runs the library tests.
