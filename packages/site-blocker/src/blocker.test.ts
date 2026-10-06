@@ -48,15 +48,11 @@ test("allowlist and blocklist overrides", async () => {
   if (block.action === "block") assert.equal(block.classification.source, "blocklist");
 });
 
-test("fallback blocks distracting domains and caches", async () => {
+test("key-less fallback blocks distracting domains and is not cached", async () => {
   const { blocker, cache } = mk();
   const r = await blocker.check({ url: "https://www.youtube.com/watch" });
   assert.equal(r.action, "block");
-  if (r.action === "block") assert.equal(r.fresh, true);
-  assert.ok(cache.map.has("youtube.com"));
-  const again = await blocker.check({ url: "https://youtube.com/" });
-  if (again.action === "block") assert.equal(again.fresh, false);
-  else assert.fail("expected block");
+  assert.equal(cache.map.size, 0);
 });
 
 test("uses Jev when key set, falls back on error", async () => {
@@ -92,4 +88,57 @@ test("concurrent checks share one classification", async () => {
   const { blocker } = mk({ openrouterApiKey: "k" }, { fetch: async () => (calls++, new Response(JSON.stringify(body))) });
   await Promise.all([blocker.check({ url: "https://a.com" }), blocker.check({ url: "https://a.com" })]);
   assert.equal(calls, 1);
+});
+
+const jevBody = { model: "jev", answers: { site_category: { type: "choice", choice: "distracting", probabilities: { distracting: 0.9 }, confidence: 0.7 } } };
+
+test("caching is on by default: repeat visits don't call Jev", async () => {
+  let calls = 0;
+  const { blocker } = mk({ openrouterApiKey: "k" }, { fetch: async () => (calls++, new Response(JSON.stringify(jevBody))) });
+  await blocker.check({ url: "https://a.example/1" });
+  await blocker.check({ url: "https://a.example/2" });
+  assert.equal(calls, 1);
+});
+
+test("cacheEnabled=false calls Jev every time and stores nothing", async () => {
+  let calls = 0;
+  const { blocker, cache } = mk({ openrouterApiKey: "k", cacheEnabled: false }, { fetch: async () => (calls++, new Response(JSON.stringify(jevBody))) });
+  await blocker.check({ url: "https://a.example/" });
+  await blocker.check({ url: "https://a.example/" });
+  assert.equal(calls, 2);
+  assert.equal(cache.map.size, 0);
+});
+
+test("custom cacheTtlMs expires entries", async () => {
+  let calls = 0, t = 1_000_000;
+  const { blocker } = mk({ openrouterApiKey: "k", cacheTtlMs: 1000 }, { now: () => t, fetch: async () => (calls++, new Response(JSON.stringify(jevBody))) });
+  await blocker.check({ url: "https://a.example/" });
+  t += 500; await blocker.check({ url: "https://a.example/" });
+  t += 600; await blocker.check({ url: "https://a.example/" });
+  assert.equal(calls, 2);
+});
+
+test("API failures are cached briefly, not retried every navigation", async () => {
+  let calls = 0, t = 1_000_000;
+  const { blocker } = mk({ openrouterApiKey: "k" }, { now: () => t, fetch: async () => (calls++, new Response("x", { status: 500 })) });
+  await blocker.check({ url: "https://a.example/" });
+  await blocker.check({ url: "https://a.example/" });
+  assert.equal(calls, 1);
+  t += 6 * 60 * 1000;
+  await blocker.check({ url: "https://a.example/" });
+  assert.equal(calls, 2);
+});
+
+test("stale key-less fallback entries are ignored once a key is set", async () => {
+  let calls = 0;
+  const { blocker, cache } = mk({ openrouterApiKey: "k" }, { fetch: async () => (calls++, new Response(JSON.stringify(jevBody))) });
+  cache.map.set("a.example", { verdict: "productive", probability: 0.8, distractingProbability: 0.2, confidence: 0.5, model: "fallback-heuristic", source: "fallback", timestamp: Date.now() });
+  await blocker.check({ url: "https://a.example/" });
+  assert.equal(calls, 1);
+});
+
+test("allowOnce works even with caching disabled", async () => {
+  const { blocker } = mk({ cacheEnabled: false });
+  await blocker.allowOnce("youtube.com");
+  assert.equal((await blocker.check({ url: "https://youtube.com" })).action, "allow");
 });

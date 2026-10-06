@@ -22,7 +22,9 @@ async function load() {
     threshold: 0.6,
     allowlist: [],
     blocklist: [],
+    cacheEnabled: true,
   });
+  $("cacheEnabled").checked = s.cacheEnabled !== false;
   $("apiKey").value = s.openrouterApiKey || "";
   $("model").value = s.model || "typesafe/jev-1.13";
   $("threshold").value = s.threshold ?? 0.6;
@@ -53,6 +55,7 @@ document.addEventListener("DOMContentLoaded", () => {
       openrouterApiKey: $("apiKey").value.trim(),
       model: $("model").value,
       threshold: Number($("threshold").value),
+      cacheEnabled: $("cacheEnabled").checked,
     });
     $("saveStatus").textContent = "✓ Saved";
     setTimeout(() => ($("saveStatus").textContent = ""), 2000);
