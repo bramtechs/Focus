@@ -13,6 +13,8 @@ export const CACHE_TTL_MS = 7 * 24 * 60 * 60 * 1000; // 7 days per domain
 const ALLOW_ONCE_MS = 60 * 60 * 1000; // 1 hour
 /** After a failed Jev call, reuse the fallback verdict this long instead of retrying every navigation. */
 export const ERROR_TTL_MS = 5 * 60 * 1000;
+/** With caching off, still merge the duplicate events one navigation fires (e.g. onBeforeNavigate + tabs.onUpdated). */
+const BURST_DEDUPE_MS = 3000;
 
 export interface SiteBlockerOptions {
   /** Current settings; called on every check so changes apply immediately. */
@@ -167,7 +169,14 @@ export function createSiteBlocker(options: SiteBlockerOptions): SiteBlocker {
           const entry = toCacheEntry(result, settings);
           if (entry) await options.cache.set(domain, entry);
           return { result, fresh: true };
-        })().finally(() => inflight.delete(domain));
+        })().finally(() => {
+          if (settings.cacheEnabled === false) {
+            const timer: any = setTimeout(() => inflight.delete(domain), BURST_DEDUPE_MS);
+            timer.unref?.();
+          } else {
+            inflight.delete(domain);
+          }
+        });
         inflight.set(domain, task);
       }
       const { result } = await task;
@@ -177,6 +186,7 @@ export function createSiteBlocker(options: SiteBlockerOptions): SiteBlocker {
     },
 
     async recheck(domain) {
+      inflight.delete(domain);
       await options.cache.delete(domain);
     },
 
