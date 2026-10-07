@@ -1,0 +1,27 @@
+{
+  "name": "@focus/dns-server",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Network-wide Focus: a DNS server that blocks distracting domains with @focus/site-blocker, plus a web dashboard.",
+  "license": "MIT",
+  "type": "module",
+  "main": "./dist/main.js",
+  "bin": { "focus-dns": "./dist/main.js" },
+  "engines": { "node": ">=20" },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "start": "node dist/main.js",
+    "test": "tsc -p tsconfig.json && node --test \"dist/**/*.test.js\""
+  },
+  "dependencies": {
+    "@focus/site-blocker": "*",
+    "dns2": "^3.1.1",
+    "fastify": "^5.6.0",
+    "lowdb": "^7.0.1",
+    "tldts": "^7.0.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "typescript": "^5.6.0"
+  }
+}

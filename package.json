@@ -5,7 +5,9 @@
   "scripts": {
     "build:lib": "npm run build -w @focus/site-blocker",
     "build": "npm run build:lib && esbuild src/background.js --bundle --format=iife --target=es2022 --outfile=background.js",
-    "test": "npm test -w @focus/site-blocker"
+    "build:dns": "npm run build:lib && npm run build -w @focus/dns-server",
+    "start:dns": "npm start -w @focus/dns-server",
+    "test": "npm test -w @focus/site-blocker && npm test -w @focus/dns-server"
   },
   "devDependencies": {
     "esbuild": "^0.24.0"

@@ -141,3 +141,41 @@ test("allowOnce works even with caching disabled", async () => {
   await blocker.allowOnce("youtube.com");
   assert.equal((await blocker.check({ url: "https://youtube.com" })).action, "allow");
 });
+
+test("onMiss=background allows now and classifies for next time", async () => {
+  let calls = 0;
+  const body = {
+    model: "jev",
+    answers: { site_category: { type: "choice", choice: "distracting", probabilities: { distracting: 0.9 }, confidence: 0.7 } },
+  };
+  const { blocker, cache } = mk(
+    { openrouterApiKey: "k" },
+    { fetch: async () => (calls++, new Response(JSON.stringify(body))) }
+  );
+  const first = await blocker.check({ url: "https://example.org/" }, { onMiss: "background" });
+  assert.equal(first.action === "allow" && first.reason, "pending");
+  await new Promise((r) => setTimeout(r, 10));
+  assert.equal(cache.map.get("example.org")?.source, "jev");
+  const second = await blocker.check({ url: "https://example.org/" }, { onMiss: "background" });
+  assert.equal(second.action, "block");
+  assert.equal(calls, 1);
+});
+
+test("onMiss=fallback never calls Jev but still uses cached verdicts", async () => {
+  let calls = 0;
+  const { blocker, cache } = mk({ openrouterApiKey: "k" }, { fetch: async () => (calls++, new Response("")) });
+  assert.equal((await blocker.check({ url: "https://youtube.com/" }, { onMiss: "fallback" })).action, "block");
+  assert.equal((await blocker.check({ url: "https://example.org/" }, { onMiss: "fallback" })).action, "allow");
+  await cache.set("example.org", {
+    verdict: "distracting", probability: 0.9, distractingProbability: 0.9, confidence: 1,
+    model: "jev", source: "jev", timestamp: Date.now(),
+  });
+  assert.equal((await blocker.check({ url: "https://example.org/" }, { onMiss: "fallback" })).action, "block");
+  assert.equal(calls, 0);
+  assert.equal(cache.map.size, 1);
+});
+
+test("onMiss=background without a key decides immediately with the offline heuristic", async () => {
+  const { blocker } = mk();
+  assert.equal((await blocker.check({ url: "https://youtube.com/" }, { onMiss: "background" })).action, "block");
+});

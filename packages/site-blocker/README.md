@@ -18,6 +18,10 @@ const r = await blocker.check({ url: "https://youtube.com/" });
 if (r.action === "block") redirectToBlockedPage(r.domain, r.classification);
 ```
 
+`check(input, { onMiss })` controls what happens without a cached verdict:
+`"classify"` (default, wait for Jev), `"background"` (allow now with reason
+`"pending"`, classify for next time) or `"fallback"` (offline heuristic, never Jev).
+
 Also exposes `recheck(domain)`, `allowOnce(domain)` and `testApiKey(key)`.
 Optional `fetch` and `now` can be injected (useful for tests).
 
