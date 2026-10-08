@@ -1,0 +1,6 @@
+**/node_modules
+**/dist
+packages/dns-server/data
+.git
+build
+background.js

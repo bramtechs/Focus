@@ -128,4 +128,11 @@ all browsers continue to share one behavior implementation.
 The blocking logic lives in the TypeScript library `packages/site-blocker`
 (`@focus/site-blocker`). The extension's `src/background.js` is thin browser glue
 that is bundled into `background.js` (gitignored) — run `npm install && npm run build`
-before loading the extension unpacked. `npm test` runs the library tests.
+before loading the extension unpacked. `npm test` runs the library and DNS server tests.
+
+## Network-wide blocking (DNS server)
+
+`packages/dns-server` (`@focus/dns-server`) uses the same library as a DNS server with a
+web dashboard (on/off, timed focus sessions), so every device on your network gets Focus.
+Run it with `docker compose up -d` from the repo root, or see
+[its README](packages/dns-server/README.md).

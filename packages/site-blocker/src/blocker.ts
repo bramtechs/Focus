@@ -33,11 +33,23 @@ export interface CheckInput {
   getTitle?: () => Promise<string | undefined> | string | undefined;
 }
 
+/**
+ * What to do when a domain has no usable cached verdict:
+ * - "classify" (default): classify now (Jev, or the offline heuristic without a key) and wait.
+ * - "background": start classifying for next time, but allow this check ("pending").
+ * - "fallback": never call Jev; decide with the offline heuristic (not cached).
+ */
+export type MissPolicy = "classify" | "background" | "fallback";
+
+export interface CheckOptions {
+  onMiss?: MissPolicy;
+}
+
 export type CheckResult =
   | {
       action: "allow";
-      reason: "disabled" | "ignored" | "allowlist" | "classified";
-      /** Present when reason is "classified". */
+      reason: "disabled" | "ignored" | "allowlist" | "classified" | "pending";
+      /** Present when reason is "classified" or "pending". */
       domain?: string;
       classification?: Classification;
       fresh?: boolean;
@@ -51,7 +63,7 @@ export type CheckResult =
     };
 
 export interface SiteBlocker {
-  check(input: CheckInput): Promise<CheckResult>;
+  check(input: CheckInput, options?: CheckOptions): Promise<CheckResult>;
   /** Drop the cached verdict for a domain so it's re-classified next time. */
   recheck(domain: string): Promise<void>;
   /** Temporarily mark a domain productive (1h). */
@@ -122,7 +134,7 @@ export function createSiteBlocker(options: SiteBlockerOptions): SiteBlocker {
     Number(c.distractingProbability ?? c.probability ?? 0) >= threshold;
 
   return {
-    async check(input) {
+    async check(input, checkOptions = {}) {
       if (!isNavigable(input.url)) return { action: "allow", reason: "ignored" };
       const settings = await options.getSettings();
       if (!settings.enabled) return { action: "allow", reason: "disabled" };
@@ -159,6 +171,15 @@ export function createSiteBlocker(options: SiteBlockerOptions): SiteBlocker {
           : { action: "allow", reason: "classified", domain, classification: cached, fresh: false };
       }
 
+      const onMiss = checkOptions.onMiss ?? "classify";
+      // Without a key the offline heuristic is instant, so "background" has nothing to defer.
+      if (onMiss === "fallback" || (onMiss === "background" && !settings.openrouterApiKey)) {
+        const result = fallbackClassify(domain);
+        return isBlocking(result, settings.threshold)
+          ? { action: "block", domain, classification: result, fresh: false }
+          : { action: "allow", reason: "classified", domain, classification: result, fresh: false };
+      }
+
       // Share one classification between concurrent checks of the same domain.
       let task = inflight.get(domain);
       let fresh = false;
@@ -178,6 +199,10 @@ export function createSiteBlocker(options: SiteBlockerOptions): SiteBlocker {
           }
         });
         inflight.set(domain, task);
+      }
+      if (onMiss === "background") {
+        task.catch(() => {}); // nobody awaits it here; failures just mean "try again later"
+        return { action: "allow", reason: "pending", domain, fresh };
       }
       const { result } = await task;
       return isBlocking(result, settings.threshold)
