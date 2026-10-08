@@ -1,0 +1,22 @@
+# Network-wide Focus: DNS server + dashboard. See packages/dns-server/README.md#docker.
+services:
+  focus-dns:
+    build: .
+    image: focus-dns
+    restart: unless-stopped
+    ports:
+      # On hosts running systemd-resolved, prefix the DNS ports with the LAN IP,
+      # e.g. "192.168.1.10:53:53/udp" (see the README).
+      - "53:53/udp"
+      - "53:53/tcp"
+      - "8080:8080"
+    environment:
+      OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-}
+      FOCUS_ALLOWLIST: ${FOCUS_ALLOWLIST:-}
+      FOCUS_BLOCKLIST: ${FOCUS_BLOCKLIST:-}
+      UPSTREAM_DNS: ${UPSTREAM_DNS:-1.1.1.1,8.8.8.8}
+    volumes:
+      - focus-data:/data
+
+volumes:
+  focus-data:
