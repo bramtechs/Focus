@@ -134,4 +134,5 @@ before loading the extension unpacked. `npm test` runs the library and DNS serve
 
 `packages/dns-server` (`@focus/dns-server`) uses the same library as a DNS server with a
 web dashboard (on/off, timed focus sessions), so every device on your network gets Focus.
-See [its README](packages/dns-server/README.md).
+Run it with `docker compose up -d` from the repo root, or see
+[its README](packages/dns-server/README.md).

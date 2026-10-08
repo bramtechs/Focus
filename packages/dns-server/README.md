@@ -24,6 +24,40 @@ server in your router's DHCP settings (network-wide) or on individual devices.
 On Ubuntu/Debian, `systemd-resolved` already listens on `127.0.0.53:53`; either bind
 Focus to the LAN address (`DNS_HOST=192.168.1.10`) or disable the stub listener.
 
+## Docker
+
+The `Dockerfile` and `docker-compose.yml` live in the repo root (the image builds the
+whole workspace). The compose file publishes DNS on `53/udp` + `53/tcp` and the dashboard
+on `8080`, and keeps `DATA_DIR` (`/data`) in the `focus-data` volume.
+
+```sh
+OPENROUTER_API_KEY=sk-or-... docker compose up -d --build
+```
+
+`OPENROUTER_API_KEY`, `FOCUS_ALLOWLIST`, `FOCUS_BLOCKLIST` and `UPSTREAM_DNS` are read
+from your shell or a `.env` file next to `docker-compose.yml`; add any other variable
+from the table below to `environment:`. Without Compose:
+
+```sh
+docker build -t focus-dns .
+docker run -d --name focus-dns --restart unless-stopped \
+  -p 53:53/udp -p 53:53/tcp -p 8080:8080 -v focus-data:/data \
+  -e OPENROUTER_API_KEY=sk-or-... focus-dns
+```
+
+The container runs as the unprivileged `node` user; Docker still lets it bind port 53
+inside the container.
+
+**Port 53 already in use?** On Ubuntu/Debian, `systemd-resolved` listens on
+`127.0.0.53:53`, so publishing `53:53` fails with "address already in use". Either:
+
+- publish on the host's LAN address only, e.g. `"192.168.1.10:53:53/udp"` and
+  `"192.168.1.10:53:53/tcp"` in `docker-compose.yml`, or
+- turn off the stub listener: set `DNSStubListener=no` in `/etc/systemd/resolved.conf`,
+  point `/etc/resolv.conf` at the real resolver
+  (`sudo ln -sf /run/systemd/resolve/resolv.conf /etc/resolv.conf`) and
+  `sudo systemctl restart systemd-resolved`.
+
 ## Dashboard
 
 - **Turn on / Turn off** — global override. Either one ends a running focus session.
