@@ -14,11 +14,13 @@ const config = loadConfig();
 const store = await openStore(config.dataDir);
 const log = (msg: string) => console.log(`[focus-dns] ${msg}`);
 
+const apiKey = () => store.getApiKey() || config.openrouterApiKey;
+
 const blocker = createSiteBlocker({
   // Global on/off and focus sessions are handled by the resolver, so the library is always "enabled".
   getSettings: () => ({
     enabled: true,
-    openrouterApiKey: config.openrouterApiKey,
+    openrouterApiKey: apiKey(),
     threshold: config.threshold,
     model: config.model,
     allowlist: config.allowlist,
@@ -57,16 +59,18 @@ server.on("requestError", (err) => log(`bad request: ${err.message}`));
 const listen = { port: config.dnsPort, address: config.dnsHost };
 const addresses = await server.listen({ udp: listen, tcp: listen });
 log(`DNS on ${config.dnsHost}:${addresses.udp?.port} (udp+tcp) → ${config.upstreams.join(", ")}`);
-if (!config.openrouterApiKey) log("OPENROUTER_API_KEY not set: using the offline heuristic list only");
+if (!apiKey()) log("No OpenRouter API key: using the offline heuristic list until one is set in the dashboard");
 
 const dashboard = createDashboard({
   getState: store.getState,
   setState: store.setState,
   stats: resolver.stats,
   blocklists,
+  getApiKey: store.getApiKey,
+  setApiKey: store.setApiKey,
+  envApiKey: config.openrouterApiKey,
   info: {
     model: config.model,
-    hasApiKey: Boolean(config.openrouterApiKey),
     upstreams: config.upstreams,
     waitTimeoutMs: config.waitTimeoutMs,
   },

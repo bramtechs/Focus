@@ -236,13 +236,17 @@ function ask(addr: AddressInfo, q: Buffer): Promise<Packet> {
 test("dashboard API toggles blocking, runs focus sessions and switches modes", async () => {
   let state: BlockingState = { ...DEFAULT_STATE };
   const ensured: string[] = [];
+  let savedKey = "";
   let t = 1_000_000;
   const app = createDashboard({
     getState: () => state,
     setState: async (s) => void (state = s),
     stats: { queries: 0, blocked: 0, classified: 0, filtered: { ads: 0, adult: 0 }, since: 0 },
     blocklists: { ensure: async (c) => void ensured.push(c), status: () => ({ domains: 0, updatedAt: null, loading: false, error: null }) },
-    info: { model: "jev", hasApiKey: true, upstreams: ["1.1.1.1"], waitTimeoutMs: 1500 },
+    getApiKey: () => savedKey,
+    setApiKey: async (k) => void (savedKey = k),
+    envApiKey: "sk-env-1234",
+    info: { model: "jev", upstreams: ["1.1.1.1"], waitTimeoutMs: 1500 },
     now: () => t,
   });
   const call = async (method: any, url: string, payload?: object) => {
@@ -268,6 +272,13 @@ test("dashboard API toggles blocking, runs focus sessions and switches modes", a
   const filters = (await call("PUT", "/api/filters", { adult: true })).body.filters;
   assert.deepEqual([filters.ads.enabled, filters.adult.enabled, ensured], [false, true, ["adult"]]);
   assert.equal((await call("PUT", "/api/filters", {})).code, 400);
+
+  assert.deepEqual((await call("GET", "/api/status")).body.apiKey, { source: "env", hint: "…1234" });
+  const saved = await call("PUT", "/api/apikey", { key: " sk-or-v1-secretabcd " });
+  assert.deepEqual([saved.body.apiKey, savedKey], [{ source: "dashboard", hint: "…abcd" }, "sk-or-v1-secretabcd"]);
+  assert.doesNotMatch(JSON.stringify(saved.body), /secret/);
+  assert.equal((await call("PUT", "/api/apikey", { key: "two words" })).code, 400);
+  assert.equal((await call("PUT", "/api/apikey", { key: "" })).body.apiKey.source, "env");
 
   const page = await app.inject({ method: "GET", url: "/" });
   assert.match(page.body, /Focus DNS/);

@@ -57,6 +57,11 @@
     .mode b { display: block; font-size: 14px; }
     .stats { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; text-align: center; }
     .stat b { display: block; font-size: 22px; font-variant-numeric: tabular-nums; }
+    .key-row { display: flex; gap: 8px; margin-top: 10px; }
+    .key-row input {
+      flex: 1; min-width: 0; background: var(--bg); color: var(--text); border: 1px solid var(--line);
+      border-radius: 8px; padding: 8px 10px; font: inherit; font-size: 14px;
+    }
     #error { color: var(--bad); font-size: 13px; min-height: 1em; }
   </style>
 </head>
@@ -128,6 +133,17 @@
     </section>
 
     <section class="card">
+      <h2>OpenRouter API key</h2>
+      <div class="muted" id="keyStatus"></div>
+      <form class="key-row" id="keyForm" autocomplete="off">
+        <input type="password" id="keyInput" placeholder="sk-or-v1-â€¦" spellcheck="false" />
+        <button type="submit">Save</button>
+        <button type="button" class="secondary" id="keyRemove">Remove</button>
+      </form>
+      <div class="muted" style="margin-top:8px">Jev runs on <a href="https://openrouter.ai/keys" target="_blank" rel="noreferrer" style="color:var(--accent)">OpenRouter</a>. The key is stored on the server and never shown again.</div>
+    </section>
+
+    <section class="card">
       <div class="stats">
         <div class="stat"><b id="queries">0</b><span class="muted">queries</span></div>
         <div class="stat"><b id="blocked">0</b><span class="muted">blocked</span></div>
@@ -180,11 +196,11 @@
 
     function filterStatus(f, blocked) {
       if (!f.enabled) return "";
-      if (f.loading && !f.domains) return "Downloading list…";
+      if (f.loading && !f.domains) return "Downloading listâ€¦";
       if (!f.domains) return f.error ? `Couldn't download list: ${f.error}` : "List not loaded yet";
-      let text = `${f.domains.toLocaleString()} domains · updated ${formatAgo(Date.now() - f.updatedAt)} · ${blocked.toLocaleString()} blocked`;
-      if (f.loading) text += " · updating…";
-      else if (f.error) text += ` · last update failed: ${f.error}`;
+      let text = `${f.domains.toLocaleString()} domains Â· updated ${formatAgo(Date.now() - f.updatedAt)} Â· ${blocked.toLocaleString()} blocked`;
+      if (f.loading) text += " Â· updatingâ€¦";
+      else if (f.error) text += ` Â· last update failed: ${f.error}`;
       return text;
     }
 
@@ -213,8 +229,14 @@
       $("queries").textContent = data.stats.queries.toLocaleString();
       $("blocked").textContent = data.stats.blocked.toLocaleString();
       $("classified").textContent = data.stats.classified.toLocaleString();
+      const { source, hint } = data.apiKey;
+      $("keyStatus").textContent =
+        source === "dashboard" ? `Using the key saved here (${hint}).`
+        : source === "env" ? `Using OPENROUTER_API_KEY from the environment (${hint}). Save a key to override it.`
+        : "No key set: only the built-in offline list and your own lists are used.";
+      $("keyRemove").disabled = source !== "dashboard";
       $("info").textContent =
-        (data.hasApiKey ? `Model ${data.model}` : "No OpenRouter API key: offline list only") +
+        (source ? `Model ${data.model}` : "No OpenRouter API key: offline list only") +
         ` Â· upstream ${data.upstreams.join(", ")}`;
     }
 
@@ -253,6 +275,14 @@
       b.onclick = () => act("POST", "/api/focus", { minutes: Number(b.dataset.minutes) });
     }
     $("filters").onchange = (e) => act("PUT", "/api/filters", { [e.target.name]: e.target.checked });
+    $("keyForm").onsubmit = async (e) => {
+      e.preventDefault();
+      const key = $("keyInput").value.trim();
+      if (!key) return;
+      await act("PUT", "/api/apikey", { key });
+      if (!$("error").textContent) $("keyInput").value = "";
+    };
+    $("keyRemove").onclick = () => act("PUT", "/api/apikey", { key: "" });
     $("modes").onchange = (e) => act("PUT", "/api/mode", { newDomainMode: e.target.value });
 
     refresh();

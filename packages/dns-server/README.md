@@ -52,7 +52,8 @@ inside the container.
 
 1. Install [Docker Desktop](https://www.docker.com/products/docker-desktop/) and enable
    *Settings → General → Start Docker Desktop when you sign in*.
-2. Put `OPENROUTER_API_KEY=sk-or-...` in a `.env` file next to `docker-compose.yml` (git ignores it).
+2. Set the OpenRouter API key in the dashboard once it's running (or put
+   `OPENROUTER_API_KEY=sk-or-...` in a `.env` file next to `docker-compose.yml`; git ignores it).
 3. In an elevated PowerShell, from the repo root:
    `powershell -ExecutionPolicy Bypass -File scripts\windows\install-focus-dns.ps1`
    This opens ports 53 (UDP/TCP) and 8080 for the local subnet only, and registers a
@@ -83,6 +84,8 @@ The task runs at sign-in, not before it, so the DNS server is down until you log
   - **Allow now, classify in background** — never delays lookups; a distracting site
     loads once, then is blocked.
   - **Lists only** — never calls Jev: allow/block lists, the built-in list and earlier verdicts.
+- **OpenRouter API key** — save or remove the key Jev uses. A saved key overrides
+  `OPENROUTER_API_KEY`; the dashboard only ever shows its last four characters.
 - **Filters** — optional, off by default:
   - **Block ads & trackers** — [HaGeZi Multi Normal](https://github.com/hagezi/dns-blocklists)
   - **Block adult content** — [HaGeZi NSFW](https://github.com/hagezi/dns-blocklists)
@@ -92,13 +95,13 @@ The task runs at sign-in, not before it, so the DNS server is down until you log
   filter is first turned on, cached in `DATA_DIR/blocklists/`, and refreshed every
   `BLOCKLIST_REFRESH_HOURS`.
 
-State and verdicts persist in `DATA_DIR/focus-dns.json`.
+State, verdicts and the saved API key persist in `DATA_DIR/focus-dns.json`.
 
 ## Configuration (environment)
 
 | Variable | Default | |
 |---|---|---|
-| `OPENROUTER_API_KEY` | — | Without it, only the offline heuristic list is used |
+| `OPENROUTER_API_KEY` | — | Used unless a key is saved in the dashboard. Without any key, only the offline heuristic list is used |
 | `FOCUS_MODEL` | `typesafe/jev-1.13` | |
 | `FOCUS_THRESHOLD` | `0.6` | Block when P(distracting) ≥ threshold (0.3–0.9) |
 | `FOCUS_ALLOWLIST` / `FOCUS_BLOCKLIST` | — | Comma-separated domains; subdomains match |

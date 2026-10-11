@@ -7,11 +7,15 @@ import { DEFAULT_STATE, NEW_DOMAIN_MODES, type BlockingState } from "./state.js"
 interface Data {
   state: BlockingState;
   decisions: Record<string, CachedClassification>;
+  /** OpenRouter API key set from the dashboard; overrides OPENROUTER_API_KEY when non-empty. */
+  openrouterApiKey: string;
 }
 
 export interface Store {
   getState(): BlockingState;
   setState(state: BlockingState): Promise<void>;
+  getApiKey(): string;
+  setApiKey(key: string): Promise<void>;
   /** Persistent Jev verdict cache for @focus/site-blocker. */
   cache: CacheStore;
 }
@@ -22,6 +26,7 @@ export async function openStore(dataDir: string): Promise<Store> {
   const db = await JSONFilePreset<Data>(join(dataDir, "focus-dns.json"), {
     state: DEFAULT_STATE,
     decisions: {},
+    openrouterApiKey: "",
   });
   // Tolerate hand-edited or older files.
   db.data.state = { ...DEFAULT_STATE, ...db.data.state };
@@ -30,10 +35,13 @@ export async function openStore(dataDir: string): Promise<Store> {
   }
   db.data.state.filters = { ...DEFAULT_STATE.filters, ...db.data.state.filters };
   db.data.decisions ??= {};
+  db.data.openrouterApiKey ??= "";
 
   return {
     getState: () => db.data.state,
     setState: (state) => db.update((d) => void (d.state = state)),
+    getApiKey: () => db.data.openrouterApiKey,
+    setApiKey: (key) => db.update((d) => void (d.openrouterApiKey = key)),
     cache: {
       get: async (domain) => db.data.decisions[domain],
       set: (domain, value) => db.update((d) => void (d.decisions[domain] = value)),

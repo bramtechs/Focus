@@ -16,7 +16,12 @@ export interface DashboardOptions {
   setState: (state: BlockingState) => Promise<void>;
   stats: Stats;
   blocklists: Pick<Blocklists, "ensure" | "status">;
-  info: { model: string; hasApiKey: boolean; upstreams: string[]; waitTimeoutMs: number };
+  /** The API key saved from the dashboard ("" = none). */
+  getApiKey: () => string;
+  setApiKey: (key: string) => Promise<void>;
+  /** OPENROUTER_API_KEY from the environment, used when no key is saved. */
+  envApiKey: string;
+  info: { model: string; upstreams: string[]; waitTimeoutMs: number };
   now?: () => number;
   logger?: boolean;
 }
@@ -36,8 +41,15 @@ export function createDashboard(options: DashboardOptions) {
         CATEGORIES.map((c) => [c, { enabled: state.filters[c], ...options.blocklists.status(c) }])
       ),
       stats: options.stats,
+      apiKey: apiKeyStatus(),
       ...options.info,
     };
+  };
+  // Never send the key itself: the dashboard has no login.
+  const apiKeyStatus = () => {
+    const saved = options.getApiKey();
+    const key = saved || options.envApiKey;
+    return { source: saved ? "dashboard" : key ? "env" : null, hint: key ? `…${key.slice(-4)}` : null };
   };
   const update = async (next: BlockingState) => {
     await options.setState(next);
@@ -106,6 +118,24 @@ export function createDashboard(options: DashboardOptions) {
       // Download newly enabled lists in the background; the dashboard shows progress.
       for (const c of CATEGORIES) if (filters[c]) void options.blocklists.ensure(c);
       return update({ ...state, filters });
+    }
+  );
+
+  app.put<{ Body: { key: string } }>(
+    "/api/apikey",
+    {
+      schema: {
+        body: {
+          type: "object",
+          required: ["key"],
+          properties: { key: { type: "string", maxLength: 500, pattern: "^\\s*\\S*\\s*$" } },
+        },
+      },
+    },
+    async (req) => {
+      // An empty key removes the saved one (falling back to OPENROUTER_API_KEY, if set).
+      await options.setApiKey(req.body.key.trim());
+      return status();
     }
   );
 
