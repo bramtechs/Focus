@@ -3,3 +3,4 @@
 /packages/*/dist/
 /background.js
 /packages/dns-server/data/
+/.env
