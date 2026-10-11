@@ -129,6 +129,11 @@ State, verdicts, your lists and the saved API key persist in `DATA_DIR/focus-dns
 
 - Only `A`, `AAAA`, `HTTPS` and `SVCB` lookups of public domains are checked. Other
   record types, IP addresses, reverse lookups and local names (`.lan`, `.local`, …) pass through.
+- Cloud and CDN endpoints (`*.amazonaws.com`, `*.googleapis.com`, Akamai, Azure, Fastly, …;
+  see `src/infra.ts`) skip Jev and are allowed. They're app/API hosts, not sites, so Jev
+  could only guess from a machine-made name, and many are on the Public Suffix List, which
+  would make every hostname a separate paid classification. Your lists and the filters still
+  apply to them.
 - Allow/block lists match the exact hostname, but Jev classifies the **registrable
   domain** (`rr3---sn-x.googlevideo.com` → `googlevideo.com`), so CDN hostnames share
   one verdict and one API call. There is no page title, so Jev sees the domain only.

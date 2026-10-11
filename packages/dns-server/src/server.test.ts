@@ -74,6 +74,21 @@ test("lists match exact hosts; Jev classifies the registrable domain once", asyn
   assert.equal(resolver.stats.classified, 1);
 });
 
+test("cloud/CDN hosts skip Jev, but lists and filters still apply", async () => {
+  const lists = { ads: ["ads.cloudfront.net"] };
+  const { resolver, userLists, calls } = setup({ filters: { ads: true, adult: false } }, 0, undefined, lists);
+  for (const name of ["go-updater-1.us-west-2.elb.amazonaws.com", "play.googleapis.com", "e123.dscb.akamaiedge.net"]) {
+    assert.equal((await resolver.decide(name, Packet.TYPE.A)).reason, "infra", name);
+  }
+  assert.equal((await resolver.decide("x.ads.cloudfront.net", Packet.TYPE.A)).reason, "ads");
+  userLists.block.push("youtubei.googleapis.com");
+  assert.equal((await resolver.decide("youtubei.googleapis.com", Packet.TYPE.A)).reason, "blocklist");
+  // Not infrastructure: a lookalike name and a user-content host are still classified.
+  assert.equal((await resolver.decide("notamazonaws.com", Packet.TYPE.A)).reason, "jev");
+  assert.equal((await resolver.decide("someone.github.io", Packet.TYPE.A)).reason, "jev");
+  assert.deepEqual(calls, ["notamazonaws.com", "someone.github.io"]);
+});
+
 test("dashboard lists override Jev verdicts and filters", async () => {
   const { resolver, userLists, calls } = setup({ filters: { ads: true, adult: false } }, 0, undefined, { ads: ["ads.example"] });
   assert.equal((await resolver.decide("masswerk.at", Packet.TYPE.A)).reason, "jev");

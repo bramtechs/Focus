@@ -292,10 +292,10 @@
     const REASONS = {
       jev: "Jev", fallback: "built-in list", allowlist: "your allowlist", blocklist: "your blocklist",
       ads: "ad filter", adult: "adult filter", disabled: "blocking off", pending: "classifying",
-      type: "not checked", local: "local name", ignored: "not checked", empty: "empty",
+      type: "not checked", local: "local name", infra: "cloud/CDN host", ignored: "not checked", empty: "empty",
     };
     // Reasons where the user may want to override the decision.
-    const OVERRIDABLE = new Set(["jev", "fallback", "pending", "disabled", "ads", "adult"]);
+    const OVERRIDABLE = new Set(["jev", "fallback", "pending", "disabled", "ads", "adult", "infra"]);
 
     function logRow(q) {
       const time = new Date(q.time).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" });

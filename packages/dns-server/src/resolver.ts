@@ -4,6 +4,7 @@ import { Packet } from "dns2";
 import { parse as parseDomain } from "tldts";
 import type { Blocklists, Category } from "./blocklists.js";
 import type { Config } from "./config.js";
+import { INFRA_DOMAINS } from "./infra.js";
 import { typeName, type QueryLog } from "./querylog.js";
 import { blockingStatus, enabledFilters, type BlockingState, type DomainLists, type NewDomainMode } from "./state.js";
 import { capTtl, type Forwarder } from "./upstream.js";
@@ -87,6 +88,9 @@ export function createResolver(options: ResolverOptions) {
     if (parsed.isIp || !parsed.domain || !(parsed.isIcann || parsed.isPrivate) || host.endsWith(".arpa")) {
       return { action: "allow", reason: "local" };
     }
+    // Cloud/CDN endpoints aren't websites; classifying them costs a Jev call per hostname and
+    // risks blocking app updates and APIs on a guess.
+    if (matchesList(fqdn, INFRA_DOMAINS)) return { action: "allow", domain: fqdn, reason: "infra" };
 
     // ...but Jev classifies the registrable domain, so CDN/API hostnames like
     // rr3---sn-x.googlevideo.com share one verdict (and one API call).
