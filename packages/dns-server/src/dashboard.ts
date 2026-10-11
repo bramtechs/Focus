@@ -1,5 +1,6 @@
 import { readFile } from "node:fs/promises";
 import Fastify from "fastify";
+import { CATEGORIES, type Blocklists, type Category } from "./blocklists.js";
 import type { Stats } from "./resolver.js";
 import {
   blockingStatus,
@@ -14,6 +15,7 @@ export interface DashboardOptions {
   getState: () => BlockingState;
   setState: (state: BlockingState) => Promise<void>;
   stats: Stats;
+  blocklists: Pick<Blocklists, "ensure" | "status">;
   info: { model: string; hasApiKey: boolean; upstreams: string[]; waitTimeoutMs: number };
   now?: () => number;
   logger?: boolean;
@@ -30,6 +32,9 @@ export function createDashboard(options: DashboardOptions) {
     return {
       status: blockingStatus(state, now()),
       newDomainMode: state.newDomainMode,
+      filters: Object.fromEntries(
+        CATEGORIES.map((c) => [c, { enabled: state.filters[c], ...options.blocklists.status(c) }])
+      ),
       stats: options.stats,
       ...options.info,
     };
@@ -81,6 +86,27 @@ export function createDashboard(options: DashboardOptions) {
       },
     },
     async (req) => update({ ...options.getState(), newDomainMode: req.body.newDomainMode })
+  );
+
+  app.put<{ Body: Partial<Record<Category, boolean>> }>(
+    "/api/filters",
+    {
+      schema: {
+        body: {
+          type: "object",
+          minProperties: 1,
+          additionalProperties: false,
+          properties: Object.fromEntries(CATEGORIES.map((c) => [c, { type: "boolean" }])),
+        },
+      },
+    },
+    async (req) => {
+      const state = options.getState();
+      const filters = { ...state.filters, ...req.body };
+      // Download newly enabled lists in the background; the dashboard shows progress.
+      for (const c of CATEGORIES) if (filters[c]) void options.blocklists.ensure(c);
+      return update({ ...state, filters });
+    }
   );
 
   return app;

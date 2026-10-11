@@ -48,6 +48,21 @@ docker run -d --name focus-dns --restart unless-stopped \
 The container runs as the unprivileged `node` user; Docker still lets it bind port 53
 inside the container.
 
+### Windows: start at sign-in and open the firewall
+
+1. Install [Docker Desktop](https://www.docker.com/products/docker-desktop/) and enable
+   *Settings → General → Start Docker Desktop when you sign in*.
+2. Put `OPENROUTER_API_KEY=sk-or-...` in a `.env` file next to `docker-compose.yml` (git ignores it).
+3. In an elevated PowerShell, from the repo root:
+   `powershell -ExecutionPolicy Bypass -File scripts\windows\install-focus-dns.ps1`
+   This opens ports 53 (UDP/TCP) and 8080 for the local subnet only, and registers a
+   "Focus DNS" task that runs `scripts\windows\start-focus-dns.ps1` at sign-in.
+4. Start it now with `Start-ScheduledTask -TaskName 'Focus DNS'`.
+5. Give this PC a fixed LAN address (a DHCP reservation in the router), then set the
+   router's DHCP DNS server to that address.
+
+The task runs at sign-in, not before it, so the DNS server is down until you log on.
+
 **Port 53 already in use?** On Ubuntu/Debian, `systemd-resolved` listens on
 `127.0.0.53:53`, so publishing `53:53` fails with "address already in use". Either:
 
@@ -68,6 +83,14 @@ inside the container.
   - **Allow now, classify in background** — never delays lookups; a distracting site
     loads once, then is blocked.
   - **Lists only** — never calls Jev: allow/block lists, the built-in list and earlier verdicts.
+- **Filters** — optional, off by default:
+  - **Block ads & trackers** — [HaGeZi Multi Normal](https://github.com/hagezi/dns-blocklists)
+  - **Block adult content** — [HaGeZi NSFW](https://github.com/hagezi/dns-blocklists)
+
+  Filters block the listed domains and all their subdomains, and stay on even while Focus
+  blocking is off. `FOCUS_ALLOWLIST` still overrides them. A list is downloaded when its
+  filter is first turned on, cached in `DATA_DIR/blocklists/`, and refreshed every
+  `BLOCKLIST_REFRESH_HOURS`.
 
 State and verdicts persist in `DATA_DIR/focus-dns.json`.
 
@@ -86,6 +109,8 @@ State and verdicts persist in `DATA_DIR/focus-dns.json`.
 | `WAIT_TIMEOUT_MS` | `1500` | "Wait for Jev" limit |
 | `MAX_TTL` | `60` | Cap on forwarded answers' TTL so turning blocking on bites quickly (`0` = off) |
 | `BLOCK_TTL` | `10` | TTL of blocked answers so turning blocking off bites quickly |
+| `AD_BLOCKLIST_URLS` / `ADULT_BLOCKLIST_URLS` | HaGeZi lists | Comma-separated URLs for the filters; plain-domain, hosts or `\|\|domain^` format |
+| `BLOCKLIST_REFRESH_HOURS` | `24` | How often enabled filter lists are re-downloaded |
 
 ## How it differs from the extension
 

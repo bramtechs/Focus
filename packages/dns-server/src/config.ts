@@ -1,3 +1,4 @@
+import { DEFAULT_LIST_URLS, type Category } from "./blocklists.js";
 import { clampNumber, DEFAULT_MODEL, normalizeDomainList } from "@focus/site-blocker";
 
 export interface Config {
@@ -20,7 +21,14 @@ export interface Config {
   threshold: number;
   allowlist: string[];
   blocklist: string[];
+  /** Domain list URLs for the optional ad and adult-content filters. */
+  filterLists: Record<Category, string[]>;
+  /** How often the filter lists are re-downloaded. */
+  filterRefreshMs: number;
 }
+
+const urls = (v: string | undefined, fallback: string[]) =>
+  v ? v.split(",").map((s) => s.trim()).filter(Boolean) : fallback;
 
 const int = (v: string | undefined, fallback: number, min: number, max: number) =>
   v === undefined || v === "" ? fallback : clampNumber(Number(v), min, max, fallback);
@@ -44,5 +52,10 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     threshold: clampNumber(Number(env.FOCUS_THRESHOLD || 0.6), 0.3, 0.9, 0.6),
     allowlist: normalizeDomainList(env.FOCUS_ALLOWLIST || ""),
     blocklist: normalizeDomainList(env.FOCUS_BLOCKLIST || ""),
+    filterLists: {
+      ads: urls(env.AD_BLOCKLIST_URLS, DEFAULT_LIST_URLS.ads),
+      adult: urls(env.ADULT_BLOCKLIST_URLS, DEFAULT_LIST_URLS.adult),
+    },
+    filterRefreshMs: int(env.BLOCKLIST_REFRESH_HOURS, 24, 1, 24 * 30) * 3_600_000,
   };
 }

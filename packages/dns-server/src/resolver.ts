@@ -2,8 +2,9 @@ import type { CheckResult, MissPolicy, SiteBlocker } from "@focus/site-blocker";
 import { matchesList, registrableDomain } from "@focus/site-blocker";
 import { Packet } from "dns2";
 import { parse as parseDomain } from "tldts";
+import type { Blocklists, Category } from "./blocklists.js";
 import type { Config } from "./config.js";
-import { blockingStatus, type BlockingState, type NewDomainMode } from "./state.js";
+import { blockingStatus, enabledFilters, type BlockingState, type NewDomainMode } from "./state.js";
 import { capTtl, type Forwarder } from "./upstream.js";
 
 const TYPE_SVCB = 64;
@@ -28,12 +29,15 @@ export interface Stats {
   queries: number;
   blocked: number;
   classified: number;
+  /** Blocked by each category filter (also counted in `blocked`). */
+  filtered: Record<Category, number>;
   since: number;
 }
 
 export interface ResolverOptions {
   config: Pick<Config, "allowlist" | "blocklist" | "waitTimeoutMs" | "maxTtl" | "blockTtl">;
   blocker: SiteBlocker;
+  blocklists?: Pick<Blocklists, "match">;
   getState: () => BlockingState;
   forward: Forwarder;
   now?: () => number;
@@ -46,15 +50,25 @@ export function createResolver(options: ResolverOptions) {
   const now = options.now ?? Date.now;
   const log = options.log ?? (() => {});
   const { config, blocker } = options;
-  const stats: Stats = { queries: 0, blocked: 0, classified: 0, since: now() };
+  const stats: Stats = { queries: 0, blocked: 0, classified: 0, filtered: { ads: 0, adult: 0 }, since: now() };
 
   async function decide(name: string, type: number): Promise<Decision> {
-    if (!blockingStatus(options.getState(), now()).active) return { action: "allow", reason: "disabled" };
     if (!FILTERED_TYPES.has(type)) return { action: "allow", reason: "type" };
 
-    const host = registrableDomain(name.toLowerCase().replace(/\.$/, ""));
+    const state = options.getState();
+    const fqdn = name.toLowerCase().replace(/\.$/, "");
+    const host = registrableDomain(fqdn);
     // User lists win first and match the exact host (so "music.youtube.com" can be listed on its own)...
     if (matchesList(host, config.allowlist)) return { action: "allow", domain: host, reason: "allowlist" };
+
+    // Ad and adult-content filters apply even while Focus blocking is off.
+    const category = options.blocklists?.match(fqdn, enabledFilters(state));
+    if (category) {
+      stats.filtered[category]++;
+      return { action: "block", domain: fqdn, reason: category };
+    }
+
+    if (!blockingStatus(state, now()).active) return { action: "allow", reason: "disabled" };
     if (matchesList(host, config.blocklist)) return { action: "block", domain: host, reason: "blocklist" };
 
     // Only classify public internet names: skip IPs, reverse lookups, .local/.lan and other private names.
@@ -66,7 +80,7 @@ export function createResolver(options: ResolverOptions) {
     // ...but Jev classifies the registrable domain, so CDN/API hostnames like
     // rr3---sn-x.googlevideo.com share one verdict (and one API call).
     const domain = parsed.domain;
-    const mode = options.getState().newDomainMode;
+    const mode = state.newDomainMode;
     const check = blocker.check({ url: `https://${domain}/` }, { onMiss: MISS_POLICY[mode] });
     check.catch((err) => log(`classification failed for ${domain}: ${err}`));
 
@@ -104,7 +118,8 @@ export function createResolver(options: ResolverOptions) {
       const decision = q ? await decide(q.name, q.type) : { action: "allow" as const, reason: "empty" };
       if (decision.action === "block") {
         stats.blocked++;
-        log(`blocked ${q.name} (${decision.domain}, ${decision.reason})`);
+        // Ad blocks are too frequent to log one by one; the dashboard counts them.
+        if (!(decision.reason in stats.filtered)) log(`blocked ${q.name} (${decision.domain}, ${decision.reason})`);
         await send(blockedResponse(request));
         return;
       }

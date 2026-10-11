@@ -28,6 +28,7 @@ export async function openStore(dataDir: string): Promise<Store> {
   if (!NEW_DOMAIN_MODES.includes(db.data.state.newDomainMode)) {
     db.data.state.newDomainMode = DEFAULT_STATE.newDomainMode;
   }
+  db.data.state.filters = { ...DEFAULT_STATE.filters, ...db.data.state.filters };
   db.data.decisions ??= {};
 
   return {

@@ -1,9 +1,12 @@
 #!/usr/bin/env node
+import { join } from "node:path";
 import { createSiteBlocker } from "@focus/site-blocker";
 import dns2 from "dns2";
+import { createBlocklists } from "./blocklists.js";
 import { loadConfig } from "./config.js";
 import { createDashboard } from "./dashboard.js";
 import { createResolver } from "./resolver.js";
+import { enabledFilters } from "./state.js";
 import { openStore } from "./store.js";
 import { createForwarder } from "./upstream.js";
 
@@ -25,9 +28,20 @@ const blocker = createSiteBlocker({
   headers: { "HTTP-Referer": "https://github.com/bramtechs/Focus", "X-Title": "Focus DNS" },
 });
 
+const blocklists = createBlocklists({
+  urls: config.filterLists,
+  dir: join(config.dataDir, "blocklists"),
+  refreshMs: config.filterRefreshMs,
+  log,
+});
+const refreshFilters = () => enabledFilters(store.getState()).forEach((c) => void blocklists.ensure(c));
+refreshFilters();
+setInterval(refreshFilters, 3_600_000).unref();
+
 const resolver = createResolver({
   config,
   blocker,
+  blocklists,
   getState: store.getState,
   forward: createForwarder(config.upstreams),
   log,
@@ -49,6 +63,7 @@ const dashboard = createDashboard({
   getState: store.getState,
   setState: store.setState,
   stats: resolver.stats,
+  blocklists,
   info: {
     model: config.model,
     hasApiKey: Boolean(config.openrouterApiKey),

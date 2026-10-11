@@ -1,9 +1,13 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import dgram from "node:dgram";
+import { mkdtemp, readFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import type { AddressInfo } from "node:net";
 import { createSiteBlocker, type CachedClassification, type CacheStore } from "@focus/site-blocker";
 import dns2, { Packet } from "dns2";
+import { createBlocklists, parseDomainList } from "./blocklists.js";
 import { createDashboard } from "./dashboard.js";
 import { createResolver } from "./resolver.js";
 import { DEFAULT_STATE, type BlockingState } from "./state.js";
@@ -17,7 +21,7 @@ function memCache(): CacheStore & { map: Map<string, CachedClassification> } {
 }
 
 /** Real @focus/site-blocker with a fake Jev that calls everything distracting after `latencyMs`. */
-function setup(state: Partial<BlockingState> = {}, latencyMs = 0, forward?: Forwarder) {
+function setup(state: Partial<BlockingState> = {}, latencyMs = 0, forward?: Forwarder, lists: Record<string, string[]> = {}) {
   const calls: string[] = [];
   const cache = memCache();
   const blocker = createSiteBlocker({
@@ -36,6 +40,7 @@ function setup(state: Partial<BlockingState> = {}, latencyMs = 0, forward?: Forw
     config,
     blocker,
     getState: () => current,
+    blocklists: { match: (host, categories) => categories.find((c) => lists[c]?.some((d) => host === d || host.endsWith("." + d))) },
     forward: forward ?? (async () => { throw new Error("no upstream in this test"); }),
   });
   return { resolver, calls, cache, setState: (s: Partial<BlockingState>) => void (current = { ...current, ...s }) };
@@ -88,6 +93,56 @@ test("focus session blocks until it ends", async () => {
   assert.equal((await resolver.decide("bad.example", Packet.TYPE.A)).action, "block");
   setState({ focusUntil: Date.now() - 1 });
   assert.equal((await resolver.decide("bad.example", Packet.TYPE.A)).action, "allow");
+});
+
+test("filters block their lists even with Focus off; the allowlist still wins", async () => {
+  const lists = { ads: ["ads.example", "music.youtube.com"], adult: ["porn.example"] };
+  const { resolver, calls, setState } = setup({ enabled: false, filters: { ads: true, adult: false } }, 0, undefined, lists);
+  const ad = await resolver.decide("cdn.ads.example.", Packet.TYPE.A);
+  assert.deepEqual([ad.action, ad.reason, ad.domain], ["block", "ads", "cdn.ads.example"]);
+  assert.equal((await resolver.decide("porn.example", Packet.TYPE.A)).reason, "disabled");
+  assert.equal((await resolver.decide("music.youtube.com", Packet.TYPE.A)).reason, "allowlist");
+  setState({ filters: { ads: false, adult: true } });
+  assert.equal((await resolver.decide("www.porn.example", Packet.TYPE.AAAA)).reason, "adult");
+  assert.equal((await resolver.decide("ads.example", Packet.TYPE.A)).reason, "disabled");
+  assert.deepEqual(resolver.stats.filtered, { ads: 1, adult: 1 });
+  assert.deepEqual(calls, []);
+});
+
+test("parseDomainList reads plain, hosts and adblock formats", () => {
+  const text = "# comment\n0.0.0.0 localhost\n127.0.0.1 Tracker.Example # x\nads.example\n||pixel.example^\n*.wild.example\n::1 ip6-localhost\n1.2.3.4\n";
+  assert.deepEqual([...parseDomainList(text)], ["tracker.example", "ads.example", "pixel.example", "wild.example"]);
+});
+
+test("blocklists download once, cache to disk and match subdomains", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "focus-lists-"));
+  let downloads = 0;
+  let t = 0;
+  const make = () =>
+    createBlocklists({
+      urls: { ads: ["https://lists.test/ads"], adult: ["https://lists.test/adult"] },
+      dir,
+      refreshMs: 1000,
+      now: () => t,
+      fetch: async () => (downloads++, new Response("ads.example\n")),
+    });
+  const lists = make();
+  await Promise.all([lists.ensure("ads"), lists.ensure("ads")]);
+  assert.equal(downloads, 1);
+  assert.equal(lists.match("x.ads.example", ["ads"]), "ads");
+  assert.equal(lists.match("ads.example.org", ["ads"]), undefined);
+  assert.equal(lists.match("x.ads.example", ["adult"]), undefined);
+  assert.equal(await readFile(join(dir, "ads.txt"), "utf8"), "ads.example\n");
+
+  // A restart uses the cached file while it's fresh...
+  t = Date.now();
+  const restarted = make();
+  await restarted.ensure("ads");
+  assert.deepEqual([downloads, restarted.status("ads").domains], [1, 1]);
+  // ...and re-downloads it once it's stale.
+  t += 2000;
+  await restarted.ensure("ads");
+  assert.equal(downloads, 2);
 });
 
 function query(name: string, type: number, id = 1234): Buffer {
@@ -180,11 +235,13 @@ function ask(addr: AddressInfo, q: Buffer): Promise<Packet> {
 
 test("dashboard API toggles blocking, runs focus sessions and switches modes", async () => {
   let state: BlockingState = { ...DEFAULT_STATE };
+  const ensured: string[] = [];
   let t = 1_000_000;
   const app = createDashboard({
     getState: () => state,
     setState: async (s) => void (state = s),
-    stats: { queries: 0, blocked: 0, classified: 0, since: 0 },
+    stats: { queries: 0, blocked: 0, classified: 0, filtered: { ads: 0, adult: 0 }, since: 0 },
+    blocklists: { ensure: async (c) => void ensured.push(c), status: () => ({ domains: 0, updatedAt: null, loading: false, error: null }) },
     info: { model: "jev", hasApiKey: true, upstreams: ["1.1.1.1"], waitTimeoutMs: 1500 },
     now: () => t,
   });
@@ -207,6 +264,10 @@ test("dashboard API toggles blocking, runs focus sessions and switches modes", a
   assert.equal((await call("PUT", "/api/mode", { newDomainMode: "offline" })).body.newDomainMode, "offline");
   assert.equal((await call("PUT", "/api/mode", { newDomainMode: "nope" })).code, 400);
   assert.equal((await call("POST", "/api/focus", { minutes: 0 })).code, 400);
+
+  const filters = (await call("PUT", "/api/filters", { adult: true })).body.filters;
+  assert.deepEqual([filters.ads.enabled, filters.adult.enabled, ensured], [false, true, ["adult"]]);
+  assert.equal((await call("PUT", "/api/filters", {})).code, 400);
 
   const page = await app.inject({ method: "GET", url: "/" });
   assert.match(page.body, /Focus DNS/);

@@ -4,6 +4,8 @@
  * - "background": answer immediately; classify in the background and apply the verdict next time.
  * - "offline": never call Jev; only allow/block lists, the offline heuristic and cached verdicts.
  */
+import type { Category } from "./blocklists.js";
+
 export type NewDomainMode = "wait" | "background" | "offline";
 export const NEW_DOMAIN_MODES: readonly NewDomainMode[] = ["wait", "background", "offline"];
 
@@ -13,12 +15,15 @@ export interface BlockingState {
   /** Epoch ms a timed focus session ends (blocking on until then), or null. */
   focusUntil: number | null;
   newDomainMode: NewDomainMode;
+  /** Category filters (ads, adult content); these block even while Focus blocking is off. */
+  filters: Record<Category, boolean>;
 }
 
 export const DEFAULT_STATE: BlockingState = {
   enabled: true,
   focusUntil: null,
   newDomainMode: "wait",
+  filters: { ads: false, adult: false },
 };
 
 export type BlockingStatus =
@@ -42,4 +47,8 @@ export function setEnabled(state: BlockingState, enabled: boolean): BlockingStat
 /** Block for `minutes` from now, then turn blocking off. Replaces any running session. */
 export function startFocus(state: BlockingState, minutes: number, now: number): BlockingState {
   return { ...state, enabled: false, focusUntil: now + minutes * 60_000 };
+}
+
+export function enabledFilters(state: BlockingState): Category[] {
+  return (Object.keys(state.filters) as Category[]).filter((c) => state.filters[c]);
 }

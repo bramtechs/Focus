@@ -52,6 +52,8 @@
     }
     .mode:has(input:checked) { border-color: var(--accent); background: rgba(99,102,241,.1); }
     .mode input { margin-top: 3px; accent-color: var(--accent); }
+    .mode .list-status { display: block; margin-top: 2px; }
+    .mode .list-status.bad { color: var(--bad); }
     .mode b { display: block; font-size: 14px; }
     .stats { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; text-align: center; }
     .stat b { display: block; font-size: 22px; font-variant-numeric: tabular-nums; }
@@ -109,6 +111,23 @@
     </section>
 
     <section class="card">
+      <h2>Filters</h2>
+      <div class="muted">Always on when ticked, even while Focus blocking is off. Your allowlist still wins.</div>
+      <form class="modes" id="filters">
+        <label class="mode">
+          <input type="checkbox" name="ads" />
+          <span><b>Block ads &amp; trackers</b><span class="muted">Ad, tracking and malware domains (HaGeZi Multi Normal list).</span>
+            <span class="muted list-status" id="adsStatus"></span></span>
+        </label>
+        <label class="mode">
+          <input type="checkbox" name="adult" />
+          <span><b>Block adult content</b><span class="muted">Porn and other NSFW domains (HaGeZi NSFW list).</span>
+            <span class="muted list-status" id="adultStatus"></span></span>
+        </label>
+      </form>
+    </section>
+
+    <section class="card">
       <div class="stats">
         <div class="stat"><b id="queries">0</b><span class="muted">queries</span></div>
         <div class="stat"><b id="blocked">0</b><span class="muted">blocked</span></div>
@@ -151,6 +170,24 @@
       return h ? `${h}:${mm}:${ss}` : `${mm}:${ss}`;
     }
 
+    function formatAgo(ms) {
+      const m = Math.round(ms / 60_000);
+      if (m < 1) return "just now";
+      if (m < 60) return `${m} min ago`;
+      const h = Math.round(m / 60);
+      return h < 48 ? `${h} h ago` : `${Math.round(h / 24)} days ago`;
+    }
+
+    function filterStatus(f, blocked) {
+      if (!f.enabled) return "";
+      if (f.loading && !f.domains) return "Downloading list…";
+      if (!f.domains) return f.error ? `Couldn't download list: ${f.error}` : "List not loaded yet";
+      let text = `${f.domains.toLocaleString()} domains · updated ${formatAgo(Date.now() - f.updatedAt)} · ${blocked.toLocaleString()} blocked`;
+      if (f.loading) text += " · updating…";
+      else if (f.error) text += ` · last update failed: ${f.error}`;
+      return text;
+    }
+
     function render(data) {
       current = data;
       fetchedAt = Date.now();
@@ -165,6 +202,12 @@
 
       for (const input of document.querySelectorAll("input[name=mode]")) {
         input.checked = input.value === data.newDomainMode;
+      }
+      for (const [name, f] of Object.entries(data.filters)) {
+        document.querySelector(`#filters input[name=${name}]`).checked = f.enabled;
+        const el = $(`${name}Status`);
+        el.textContent = filterStatus(f, data.stats.filtered[name]);
+        el.classList.toggle("bad", Boolean(f.enabled && f.error));
       }
       $("waitMs").textContent = `${(data.waitTimeoutMs / 1000).toFixed(1)} s`;
       $("queries").textContent = data.stats.queries.toLocaleString();
@@ -185,9 +228,12 @@
         $("statusDetail").textContent = `Distracting sites are blocked until ${end}, then blocking turns off.`;
         $("statusPill").textContent = formatRemaining(left);
       } else {
-        $("statusPill").textContent = status.kind === "on" ? "until turned off" : "nothing blocked";
+        const filtering = Object.values(current.filters).some((f) => f.enabled);
+        $("statusPill").textContent = status.kind === "on" ? "until turned off" : filtering ? "filters only" : "nothing blocked";
         $("statusDetail").textContent =
-          status.kind === "on" ? "Distracting sites are blocked on every device using this DNS server." : "All lookups are passed through.";
+          status.kind === "on" ? "Distracting sites are blocked on every device using this DNS server."
+          : filtering ? "Distracting sites are allowed; the filters below still apply."
+          : "All lookups are passed through.";
       }
     }
 
@@ -206,6 +252,7 @@
     for (const b of document.querySelectorAll("[data-minutes]")) {
       b.onclick = () => act("POST", "/api/focus", { minutes: Number(b.dataset.minutes) });
     }
+    $("filters").onchange = (e) => act("PUT", "/api/filters", { [e.target.name]: e.target.checked });
     $("modes").onchange = (e) => act("PUT", "/api/mode", { newDomainMode: e.target.value });
 
     refresh();
