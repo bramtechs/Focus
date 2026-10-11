@@ -56,7 +56,8 @@ inside the container.
    `OPENROUTER_API_KEY=sk-or-...` in a `.env` file next to `docker-compose.yml`; git ignores it).
 3. In an elevated PowerShell, from the repo root:
    `powershell -ExecutionPolicy Bypass -File scripts\windows\install-focus-dns.ps1`
-   This opens ports 53 (UDP/TCP) and 8080 for the local subnet only, and registers a
+   This opens ports 53 (UDP/TCP) and 8080 to private LAN addresses only (all RFC 1918
+   ranges, so devices on another subnet behind a second router work too), and registers a
    "Focus DNS" task that runs `scripts\windows\start-focus-dns.ps1` at sign-in.
 4. Start it now with `Start-ScheduledTask -TaskName 'Focus DNS'`.
 5. Give this PC a fixed LAN address (a DHCP reservation in the router), then set the
