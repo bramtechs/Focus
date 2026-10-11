@@ -4,6 +4,7 @@ import Fastify from "fastify";
 import { CATEGORIES, type Blocklists, type Category } from "./blocklists.js";
 import type { QueryLog } from "./querylog.js";
 import type { Stats } from "./resolver.js";
+import type { UsageMeter } from "./usage.js";
 import {
   blockingStatus,
   NEW_DOMAIN_MODES,
@@ -29,6 +30,7 @@ export interface DashboardOptions {
   /** FOCUS_ALLOWLIST / FOCUS_BLOCKLIST, shown read-only. */
   envLists: DomainLists;
   queryLog: Pick<QueryLog, "list">;
+  usage: Pick<UsageMeter, "status">;
   info: { model: string; upstreams: string[]; waitTimeoutMs: number };
   now?: () => number;
   logger?: boolean;
@@ -50,6 +52,7 @@ export function createDashboard(options: DashboardOptions) {
       ),
       stats: options.stats,
       apiKey: apiKeyStatus(),
+      jevUsage: options.usage.status(),
       lists: { ...options.getLists(), env: options.envLists },
       ...options.info,
     };
@@ -148,7 +151,7 @@ export function createDashboard(options: DashboardOptions) {
     }
   );
 
-  app.get<{ Querystring: { limit?: number; action?: "allow" | "block"; search?: string } }>(
+  app.get<{ Querystring: { limit?: number; action?: "allow" | "block"; search?: string; after?: number } }>(
     "/api/queries",
     {
       schema: {
@@ -158,6 +161,7 @@ export function createDashboard(options: DashboardOptions) {
             limit: { type: "integer", minimum: 1, maximum: 2000, default: 200 },
             action: { type: "string", enum: ["allow", "block"] },
             search: { type: "string", maxLength: 253 },
+            after: { type: "integer", minimum: 0 },
           },
         },
       },

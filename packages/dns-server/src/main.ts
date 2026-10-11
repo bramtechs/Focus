@@ -7,6 +7,7 @@ import { loadConfig } from "./config.js";
 import { createDashboard } from "./dashboard.js";
 import { createQueryLog } from "./querylog.js";
 import { createResolver } from "./resolver.js";
+import { createUsageMeter } from "./usage.js";
 import { enabledFilters } from "./state.js";
 import { openStore } from "./store.js";
 import { createForwarder } from "./upstream.js";
@@ -16,6 +17,8 @@ const store = await openStore(config.dataDir);
 const log = (msg: string) => console.log(`[focus-dns] ${msg}`);
 
 const apiKey = () => store.getApiKey() || config.openrouterApiKey;
+
+const usage = createUsageMeter({ load: store.getUsage, save: store.setUsage });
 
 const blocker = createSiteBlocker({
   // Global on/off and focus sessions are handled by the resolver, so the library is always "enabled".
@@ -28,6 +31,7 @@ const blocker = createSiteBlocker({
     blocklist: config.blocklist,
   }),
   cache: store.cache,
+  fetch: usage.meter((input, init) => fetch(input, init)),
   headers: { "HTTP-Referer": "https://github.com/bramtechs/Focus", "X-Title": "Focus DNS" },
 });
 
@@ -78,6 +82,7 @@ const dashboard = createDashboard({
   setLists: store.setLists,
   envLists: { allow: config.allowlist, block: config.blocklist },
   queryLog,
+  usage,
   info: {
     model: config.model,
     upstreams: config.upstreams,

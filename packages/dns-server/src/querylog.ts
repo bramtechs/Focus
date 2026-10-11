@@ -21,6 +21,8 @@ export interface QueryLogFilter {
   action?: "allow" | "block";
   /** Substring of the name or client. */
   search?: string;
+  /** Only entries newer than this id, so the dashboard can fetch just what's new. */
+  after?: number;
 }
 
 const TYPE_NAMES = new Map<number, string>([
@@ -42,11 +44,12 @@ export function createQueryLog(size = 2000) {
       if (entries.length > size) entries.splice(0, entries.length - size);
     },
     /** Newest first. */
-    list({ limit = 200, action, search }: QueryLogFilter = {}): QueryLogEntry[] {
+    list({ limit = 200, action, search, after = 0 }: QueryLogFilter = {}): QueryLogEntry[] {
       const needle = search?.trim().toLowerCase();
       const out: QueryLogEntry[] = [];
       for (let i = entries.length - 1; i >= 0 && out.length < limit; i--) {
         const e = entries[i];
+        if (e.id <= after) break;
         if (action && e.action !== action) continue;
         if (needle && !e.name.includes(needle) && !e.client.includes(needle)) continue;
         out.push(e);

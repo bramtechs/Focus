@@ -11,6 +11,7 @@ import { createBlocklists, parseDomainList } from "./blocklists.js";
 import { createDashboard } from "./dashboard.js";
 import { createQueryLog } from "./querylog.js";
 import { createResolver } from "./resolver.js";
+import { createUsageMeter, type JevUsage } from "./usage.js";
 import { DEFAULT_STATE, type BlockingState, type DomainLists } from "./state.js";
 import { capTtl, createForwarder, type Forwarder } from "./upstream.js";
 
@@ -123,6 +124,25 @@ test("filters block their lists even with Focus off; the allowlist still wins", 
   assert.equal((await resolver.decide("ads.example", Packet.TYPE.A)).reason, "disabled");
   assert.deepEqual(resolver.stats.filtered, { ads: 1, adult: 1 });
   assert.deepEqual(calls, []);
+});
+
+test("usage meter records the cost OpenRouter reports for each Jev call", async () => {
+  let saved: JevUsage = { calls: 0, cost: 0, since: 0 };
+  let t = 0;
+  const meter = createUsageMeter({ load: () => saved, save: async (u) => void (saved = u), now: () => t });
+  const doFetch = meter.meter(async (url) =>
+    new Response(JSON.stringify(url.includes("decisions") ? { usage: { cost: 0.00002 } } : { usage: { cost: 9 } }))
+  );
+  t = 60 * 60_000;
+  await doFetch("https://openrouter.ai/api/alpha/decisions", {});
+  await doFetch("https://openrouter.ai/api/alpha/decisions", {});
+  await doFetch("https://openrouter.ai/api/v1/key", {});
+  await new Promise((r) => setImmediate(r));
+  assert.deepEqual([saved.calls, saved.cost.toFixed(5)], [2, "0.00004"]);
+  const status = meter.status();
+  assert.equal(status.last24h.calls, 2);
+  // $0.00004 in the first hour → ×24×30 per month.
+  assert.equal(status.perMonth?.toFixed(4), (0.00004 * 24 * 30).toFixed(4));
 });
 
 test("parseDomainList reads plain, hosts and adblock formats", () => {
@@ -242,6 +262,7 @@ test("end to end: allowed names are forwarded with capped TTLs; blocked names ge
       ["example.org", "A", "allow", "127.0.0.1", "www.bad.example", "block", "blocklist"]
     );
     assert.deepEqual(queryLog.list({ action: "block", search: "bad" }).map((e) => e.type), ["AAAA", "A"]);
+    assert.deepEqual(queryLog.list({ after: first.id }).map((e) => e.name), ["example.org", "bad.example"]);
   } finally {
     await Promise.all([server.close(), upstream.close()]);
   }
@@ -277,6 +298,7 @@ test("dashboard API toggles blocking, runs focus sessions and switches modes", a
     setLists: async (l) => void (lists = l),
     envLists: { allow: ["env.example"], block: [] },
     queryLog,
+    usage: { status: () => ({ total: { calls: 3, cost: 0.00005, since: 0 }, last24h: { calls: 3, cost: 0.00005 }, windowMs: 3_600_000, perMonth: 0.036 }) },
     info: { model: "jev", upstreams: ["1.1.1.1"], waitTimeoutMs: 1500 },
     now: () => t,
   });

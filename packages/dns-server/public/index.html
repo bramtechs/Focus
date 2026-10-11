@@ -55,7 +55,11 @@
     .mode .list-status { display: block; margin-top: 2px; }
     .mode .list-status.bad { color: var(--bad); }
     .mode b { display: block; font-size: 14px; }
-    .stats { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; text-align: center; }
+    .stats { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; text-align: center; }
+    #spend { color: var(--warn); }
+    #spend.bump { animation: bump .6s ease-out; }
+    @keyframes bump { from { color: var(--text); transform: scale(1.08); } }
+    @media (max-width: 480px) { .stats { grid-template-columns: repeat(2, 1fr); } }
     .stat b { display: block; font-size: 22px; font-variant-numeric: tabular-nums; }
     .key-row { display: flex; gap: 8px; margin-top: 10px; }
     .key-row input {
@@ -82,6 +86,7 @@
     .row {
       display: grid; grid-template-columns: 64px minmax(0, 1fr) 110px 150px 64px; gap: 8px; align-items: center;
       padding: 5px 2px; border-bottom: 1px solid var(--line);
+      content-visibility: auto; contain-intrinsic-size: auto 30px; /* skip rendering off-screen rows */
     }
     .row .name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .row .type { color: var(--muted); font-size: 11px; margin-left: 4px; }
@@ -177,8 +182,10 @@
         <div class="stat"><b id="queries">0</b><span class="muted">queries</span></div>
         <div class="stat"><b id="blocked">0</b><span class="muted">blocked</span></div>
         <div class="stat"><b id="classified">0</b><span class="muted">classified</span></div>
+        <div class="stat" title="Total Jev cost reported by OpenRouter, across restarts"><b id="spend">$0</b><span class="muted">Jev spend</span></div>
       </div>
-      <div class="muted" id="info" style="margin-top:12px"></div>
+      <div class="muted" id="spendInfo" style="margin-top:12px"></div>
+      <div class="muted" id="info" style="margin-top:4px"></div>
     </section>
 
     <section class="card">
@@ -315,18 +322,96 @@
         pill, button);
     }
 
+    // Busy networks log hundreds of lookups a minute, so only new entries are fetched and
+    // prepended, the DOM is capped at LOG_ROWS rows, and requests never overlap.
+    const LOG_ROWS = 300;
     let logPaused = false;
-    async function refreshLog() {
-      const params = new URLSearchParams({ limit: "300" });
+    let lastLogId = 0;
+    let logLoading = false;
+
+    let pendingReset = false;
+    async function refreshLog({ reset = false } = {}) {
+      if (logLoading) {
+        pendingReset ||= reset; // a filter change mid-request runs once that request is done
+        return;
+      }
+      logLoading = true;
+      const log = $("log");
+      const params = new URLSearchParams({ limit: String(LOG_ROWS) });
       if ($("logAction").value) params.set("action", $("logAction").value);
       if ($("logSearch").value.trim()) params.set("search", $("logSearch").value.trim().toLowerCase());
+      if (!reset) params.set("after", String(lastLogId));
       try {
         const { queries } = await api("GET", `/api/queries?${params}`);
-        $("log").replaceChildren(...(queries.length ? queries.map(logRow)
-          : [el("div", { className: "muted", textContent: "No lookups yet. Is a device using this server for DNS?" })]));
+        if (reset) {
+          log.replaceChildren();
+          lastLogId = 0;
+        }
+        if (queries.length) {
+          lastLogId = Math.max(lastLogId, queries[0].id);
+          log.querySelector(".empty")?.remove();
+          // Keep what the user is looking at in place when they've scrolled down.
+          const keepScroll = log.scrollTop > 0;
+          const before = log.scrollHeight;
+          const rows = document.createDocumentFragment();
+          rows.append(...queries.map(logRow));
+          log.prepend(rows);
+          while (log.childElementCount > LOG_ROWS) log.lastElementChild.remove();
+          if (keepScroll) log.scrollTop += log.scrollHeight - before;
+        } else if (!log.childElementCount) {
+          log.append(el("div", { className: "muted empty", textContent: "No lookups yet. Is a device using this server for DNS?" }));
+        }
       } catch (e) {
         $("error").textContent = `Can't load the query log: ${e.message}`;
+      } finally {
+        logLoading = false;
+        if (pendingReset) {
+          pendingReset = false;
+          refreshLog({ reset: true });
+        }
       }
+    }
+    const reloadLog = () => refreshLog({ reset: true });
+    let searchTimer = 0;
+
+    // Jev calls cost fractions of a cent, so show enough digits to see the ticker move.
+    const usd = (n) => "$" + (n < 0.01 ? n.toFixed(6) : n < 1 ? n.toFixed(4) : n.toFixed(2));
+
+    let shownSpend = null;
+    let spendAnimation = 0;
+    function tickSpendTo(target) {
+      if (shownSpend === null || target <= shownSpend) {
+        shownSpend = target;
+        $("spend").textContent = usd(target);
+        return;
+      }
+      // Count up to the new total over ~1 s.
+      const from = shownSpend, start = performance.now();
+      cancelAnimationFrame(spendAnimation);
+      $("spend").classList.remove("bump");
+      void $("spend").offsetWidth;
+      $("spend").classList.add("bump");
+      const step = (t) => {
+        const k = Math.min(1, (t - start) / 1000);
+        shownSpend = from + (target - from) * (1 - (1 - k) ** 3);
+        $("spend").textContent = usd(shownSpend);
+        if (k < 1) spendAnimation = requestAnimationFrame(step);
+      };
+      spendAnimation = requestAnimationFrame(step);
+    }
+
+    function renderSpend(u) {
+      tickSpendTo(u.total.cost);
+      const parts = [`${u.total.calls.toLocaleString()} Jev calls since ${new Date(u.total.since).toLocaleDateString()}`];
+      if (u.total.calls) parts.push(`≈ ${usd(u.total.cost / u.total.calls)} per call`);
+      if (u.perMonth != null) {
+        const hours = u.windowMs / 3_600_000;
+        const basis = hours >= 23.9 ? "the last 24 h" : `the last ${hours < 1 ? Math.round(hours * 60) + " min" : hours.toFixed(1) + " h"}`;
+        parts.push(`≈ ${usd(u.perMonth)}/month at the rate of ${basis}`);
+      } else {
+        parts.push("monthly estimate after 1 h of uptime");
+      }
+      $("spendInfo").textContent = parts.join(" · ");
     }
 
     function render(data) {
@@ -355,6 +440,7 @@
       $("queries").textContent = data.stats.queries.toLocaleString();
       $("blocked").textContent = data.stats.blocked.toLocaleString();
       $("classified").textContent = data.stats.classified.toLocaleString();
+      renderSpend(data.jevUsage);
       const { source, hint } = data.apiKey;
       $("keyStatus").textContent =
         source === "dashboard" ? `Using the key saved here (${hint}).`
@@ -418,8 +504,11 @@
       await act("PUT", `/api/lists/${e.submitter.dataset.list}/${encodeURIComponent(domain)}`);
       if (!$("error").textContent) $("listInput").value = "";
     };
-    $("logAction").onchange = refreshLog;
-    $("logSearch").oninput = refreshLog;
+    $("logAction").onchange = reloadLog;
+    $("logSearch").oninput = () => {
+      clearTimeout(searchTimer);
+      searchTimer = setTimeout(reloadLog, 250);
+    };
     $("logPause").onclick = () => {
       logPaused = !logPaused;
       $("logPause").textContent = logPaused ? "Resume" : "Pause";
@@ -427,7 +516,7 @@
     };
 
     refresh();
-    refreshLog();
+    reloadLog();
     setInterval(tick, 1000);
     setInterval(refresh, 5000);
     setInterval(() => !logPaused && !document.hidden && refreshLog(), 3000);
