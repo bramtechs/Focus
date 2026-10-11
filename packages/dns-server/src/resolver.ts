@@ -4,7 +4,8 @@ import { Packet } from "dns2";
 import { parse as parseDomain } from "tldts";
 import type { Blocklists, Category } from "./blocklists.js";
 import type { Config } from "./config.js";
-import { blockingStatus, enabledFilters, type BlockingState, type NewDomainMode } from "./state.js";
+import { typeName, type QueryLog } from "./querylog.js";
+import { blockingStatus, enabledFilters, type BlockingState, type DomainLists, type NewDomainMode } from "./state.js";
 import { capTtl, type Forwarder } from "./upstream.js";
 
 const TYPE_SVCB = 64;
@@ -23,6 +24,8 @@ export interface Decision {
   /** The domain that was classified (registrable domain), when one was. */
   domain?: string;
   reason: string;
+  /** P(distracting), when the domain was classified. */
+  score?: number;
 }
 
 export interface Stats {
@@ -39,6 +42,9 @@ export interface ResolverOptions {
   blocker: SiteBlocker;
   blocklists?: Pick<Blocklists, "match">;
   getState: () => BlockingState;
+  /** Allow/block lists edited in the dashboard, on top of the configured ones. */
+  getLists?: () => DomainLists;
+  queryLog?: Pick<QueryLog, "add">;
   forward: Forwarder;
   now?: () => number;
   log?: (msg: string) => void;
@@ -58,8 +64,11 @@ export function createResolver(options: ResolverOptions) {
     const state = options.getState();
     const fqdn = name.toLowerCase().replace(/\.$/, "");
     const host = registrableDomain(fqdn);
+    const lists = options.getLists?.() ?? { allow: [], block: [] };
     // User lists win first and match the exact host (so "music.youtube.com" can be listed on its own)...
-    if (matchesList(host, config.allowlist)) return { action: "allow", domain: host, reason: "allowlist" };
+    if (matchesList(host, config.allowlist) || matchesList(host, lists.allow)) {
+      return { action: "allow", domain: host, reason: "allowlist" };
+    }
 
     // Ad and adult-content filters apply even while Focus blocking is off.
     const category = options.blocklists?.match(fqdn, enabledFilters(state));
@@ -69,7 +78,9 @@ export function createResolver(options: ResolverOptions) {
     }
 
     if (!blockingStatus(state, now()).active) return { action: "allow", reason: "disabled" };
-    if (matchesList(host, config.blocklist)) return { action: "block", domain: host, reason: "blocklist" };
+    if (matchesList(host, config.blocklist) || matchesList(host, lists.block)) {
+      return { action: "block", domain: host, reason: "blocklist" };
+    }
 
     // Only classify public internet names: skip IPs, reverse lookups, .local/.lan and other private names.
     const parsed = parseDomain(host, { allowPrivateDomains: true });
@@ -90,10 +101,13 @@ export function createResolver(options: ResolverOptions) {
     if (result === "timeout") return { action: "allow", domain, reason: "pending" };
 
     if (result.fresh && result.classification?.source === "jev") stats.classified++;
+    const score = result.classification?.distractingProbability;
     if (result.action === "block") {
-      return { action: "block", domain, reason: result.classification.source };
+      return { action: "block", domain, reason: result.classification.source, score };
     }
-    return { action: "allow", domain, reason: result.reason };
+    // Name who classified it ("jev", "fallback") rather than the generic "classified".
+    const reason = result.reason === "classified" && result.classification ? result.classification.source : result.reason;
+    return { action: "allow", domain, reason, score };
   }
 
   function blockedResponse(request: Packet): Packet {
@@ -111,11 +125,22 @@ export function createResolver(options: ResolverOptions) {
     return response;
   }
 
-  async function handle(request: Packet, send: Send): Promise<void> {
+  async function handle(request: Packet, send: Send, client?: unknown): Promise<void> {
     stats.queries++;
+    const started = now();
     const [q] = request.questions;
     try {
-      const decision = q ? await decide(q.name, q.type) : { action: "allow" as const, reason: "empty" };
+      const decision: Decision = q ? await decide(q.name, q.type) : { action: "allow", reason: "empty" };
+      if (q) {
+        options.queryLog?.add({
+          time: started,
+          client: clientAddress(client),
+          name: q.name.toLowerCase().replace(/\.$/, ""),
+          type: typeName(q.type),
+          ...decision,
+          ms: now() - started,
+        });
+      }
       if (decision.action === "block") {
         stats.blocked++;
         // Ad blocks are too frequent to log one by one; the dashboard counts them.
@@ -132,6 +157,13 @@ export function createResolver(options: ResolverOptions) {
   }
 
   return { decide, handle, stats };
+}
+
+/** dns2 passes RemoteInfo for UDP and the socket for TCP. */
+function clientAddress(client: unknown): string {
+  const c = client as { address?: unknown; remoteAddress?: unknown } | undefined;
+  const address = typeof c?.address === "string" ? c.address : typeof c?.remoteAddress === "string" ? c.remoteAddress : "";
+  return address.replace(/^::ffff:/, "");
 }
 
 const delay = (ms: number) =>

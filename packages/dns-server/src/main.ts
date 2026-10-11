@@ -5,6 +5,7 @@ import dns2 from "dns2";
 import { createBlocklists } from "./blocklists.js";
 import { loadConfig } from "./config.js";
 import { createDashboard } from "./dashboard.js";
+import { createQueryLog } from "./querylog.js";
 import { createResolver } from "./resolver.js";
 import { enabledFilters } from "./state.js";
 import { openStore } from "./store.js";
@@ -40,11 +41,15 @@ const refreshFilters = () => enabledFilters(store.getState()).forEach((c) => voi
 refreshFilters();
 setInterval(refreshFilters, 3_600_000).unref();
 
+const queryLog = createQueryLog();
+
 const resolver = createResolver({
   config,
   blocker,
   blocklists,
   getState: store.getState,
+  getLists: store.getLists,
+  queryLog,
   forward: createForwarder(config.upstreams),
   log,
 });
@@ -52,7 +57,7 @@ const resolver = createResolver({
 const server = dns2.createServer({
   udp: true,
   tcp: true,
-  handle: (request, send) => void resolver.handle(request, send),
+  handle: (request, send, client) => void resolver.handle(request, send, client),
 });
 server.on("error", (err, transport) => log(`${transport} error: ${err.message}`));
 server.on("requestError", (err) => log(`bad request: ${err.message}`));
@@ -69,6 +74,10 @@ const dashboard = createDashboard({
   getApiKey: store.getApiKey,
   setApiKey: store.setApiKey,
   envApiKey: config.openrouterApiKey,
+  getLists: store.getLists,
+  setLists: store.setLists,
+  envLists: { allow: config.allowlist, block: config.blocklist },
+  queryLog,
   info: {
     model: config.model,
     upstreams: config.upstreams,

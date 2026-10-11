@@ -2,13 +2,14 @@ import { mkdir } from "node:fs/promises";
 import { join } from "node:path";
 import type { CachedClassification, CacheStore } from "@focus/site-blocker";
 import { JSONFilePreset } from "lowdb/node";
-import { DEFAULT_STATE, NEW_DOMAIN_MODES, type BlockingState } from "./state.js";
+import { DEFAULT_STATE, NEW_DOMAIN_MODES, type BlockingState, type DomainLists } from "./state.js";
 
 interface Data {
   state: BlockingState;
   decisions: Record<string, CachedClassification>;
   /** OpenRouter API key set from the dashboard; overrides OPENROUTER_API_KEY when non-empty. */
   openrouterApiKey: string;
+  lists: DomainLists;
 }
 
 export interface Store {
@@ -16,6 +17,8 @@ export interface Store {
   setState(state: BlockingState): Promise<void>;
   getApiKey(): string;
   setApiKey(key: string): Promise<void>;
+  getLists(): DomainLists;
+  setLists(lists: DomainLists): Promise<void>;
   /** Persistent Jev verdict cache for @focus/site-blocker. */
   cache: CacheStore;
 }
@@ -27,6 +30,7 @@ export async function openStore(dataDir: string): Promise<Store> {
     state: DEFAULT_STATE,
     decisions: {},
     openrouterApiKey: "",
+    lists: { allow: [], block: [] },
   });
   // Tolerate hand-edited or older files.
   db.data.state = { ...DEFAULT_STATE, ...db.data.state };
@@ -36,12 +40,16 @@ export async function openStore(dataDir: string): Promise<Store> {
   db.data.state.filters = { ...DEFAULT_STATE.filters, ...db.data.state.filters };
   db.data.decisions ??= {};
   db.data.openrouterApiKey ??= "";
+  const lists: Partial<DomainLists> = db.data.lists ?? {};
+  db.data.lists = { allow: lists.allow ?? [], block: lists.block ?? [] };
 
   return {
     getState: () => db.data.state,
     setState: (state) => db.update((d) => void (d.state = state)),
     getApiKey: () => db.data.openrouterApiKey,
     setApiKey: (key) => db.update((d) => void (d.openrouterApiKey = key)),
+    getLists: () => db.data.lists,
+    setLists: (lists) => db.update((d) => void (d.lists = lists)),
     cache: {
       get: async (domain) => db.data.decisions[domain],
       set: (domain, value) => db.update((d) => void (d.decisions[domain] = value)),

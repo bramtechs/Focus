@@ -95,7 +95,16 @@ The task runs at sign-in, not before it, so the DNS server is down until you log
   filter is first turned on, cached in `DATA_DIR/blocklists/`, and refreshed every
   `BLOCKLIST_REFRESH_HOURS`.
 
-State, verdicts and the saved API key persist in `DATA_DIR/focus-dns.json`.
+- **Your lists** — always allow or always block a domain (and its subdomains), on top of
+  `FOCUS_ALLOWLIST` / `FOCUS_BLOCKLIST`. They're checked before the filters and Jev, so they
+  also fix false positives.
+- **Query log** — the last 2,000 lookups (in memory): device, name, record type, whether it was
+  allowed or blocked and why (Jev with its P(distracting), a filter, your lists, …). Each
+  overridable row has an **Allow** / **Block** button that adds the domain to your lists.
+  Under Docker Desktop the device column shows Docker's gateway address, because its port
+  forwarding hides the real client IP.
+
+State, verdicts, your lists and the saved API key persist in `DATA_DIR/focus-dns.json`.
 
 ## Configuration (environment)
 

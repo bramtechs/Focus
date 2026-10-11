@@ -9,8 +9,9 @@ import { createSiteBlocker, type CachedClassification, type CacheStore } from "@
 import dns2, { Packet } from "dns2";
 import { createBlocklists, parseDomainList } from "./blocklists.js";
 import { createDashboard } from "./dashboard.js";
+import { createQueryLog } from "./querylog.js";
 import { createResolver } from "./resolver.js";
-import { DEFAULT_STATE, type BlockingState } from "./state.js";
+import { DEFAULT_STATE, type BlockingState, type DomainLists } from "./state.js";
 import { capTtl, createForwarder, type Forwarder } from "./upstream.js";
 
 const config = { allowlist: ["music.youtube.com"], blocklist: ["bad.example"], waitTimeoutMs: 50, maxTtl: 60, blockTtl: 10 };
@@ -36,14 +37,18 @@ function setup(state: Partial<BlockingState> = {}, latencyMs = 0, forward?: Forw
     },
   });
   let current: BlockingState = { ...DEFAULT_STATE, ...state };
+  const userLists: DomainLists = { allow: [], block: [] };
+  const queryLog = createQueryLog();
   const resolver = createResolver({
     config,
     blocker,
     getState: () => current,
+    getLists: () => userLists,
+    queryLog,
     blocklists: { match: (host, categories) => categories.find((c) => lists[c]?.some((d) => host === d || host.endsWith("." + d))) },
     forward: forward ?? (async () => { throw new Error("no upstream in this test"); }),
   });
-  return { resolver, calls, cache, setState: (s: Partial<BlockingState>) => void (current = { ...current, ...s }) };
+  return { resolver, calls, cache, userLists, queryLog, setState: (s: Partial<BlockingState>) => void (current = { ...current, ...s }) };
 }
 
 test("blocking off, local names and non-web query types are never classified", async () => {
@@ -66,6 +71,17 @@ test("lists match exact hosts; Jev classifies the registrable domain once", asyn
   assert.deepEqual([a.action, a.domain, b.action], ["block", "googlevideo.com", "block"]);
   assert.deepEqual(calls, ["googlevideo.com"]);
   assert.equal(resolver.stats.classified, 1);
+});
+
+test("dashboard lists override Jev verdicts and filters", async () => {
+  const { resolver, userLists, calls } = setup({ filters: { ads: true, adult: false } }, 0, undefined, { ads: ["ads.example"] });
+  assert.equal((await resolver.decide("masswerk.at", Packet.TYPE.A)).reason, "jev");
+  userLists.allow.push("masswerk.at", "ads.example");
+  assert.equal((await resolver.decide("www.masswerk.at", Packet.TYPE.A)).reason, "allowlist");
+  assert.equal((await resolver.decide("cdn.ads.example", Packet.TYPE.A)).reason, "allowlist");
+  userLists.block.push("quiet.example");
+  assert.equal((await resolver.decide("quiet.example", Packet.TYPE.A)).reason, "blocklist");
+  assert.deepEqual(calls, ["masswerk.at"]);
 });
 
 test("wait mode allows when Jev is slower than the timeout, then uses the verdict", async () => {
@@ -206,8 +222,8 @@ test("forwarder falls through to the next upstream", async () => {
 
 test("end to end: allowed names are forwarded with capped TTLs; blocked names get 0.0.0.0", async () => {
   const { upstream, port } = await fakeUpstream(1);
-  const { resolver } = setup({ newDomainMode: "offline" }, 0, createForwarder([`127.0.0.1:${port}`]));
-  const server = dns2.createServer({ udp: true, handle: (req, send) => void resolver.handle(req, send) });
+  const { resolver, queryLog } = setup({ newDomainMode: "offline" }, 0, createForwarder([`127.0.0.1:${port}`]));
+  const server = dns2.createServer({ udp: true, handle: (req, send, client) => void resolver.handle(req, send, client) });
   const { udp } = await server.listen({ udp: { port: 0, address: "127.0.0.1" } });
   try {
     const blocked = await ask(udp!, query("www.bad.example", Packet.TYPE.A));
@@ -219,6 +235,13 @@ test("end to end: allowed names are forwarded with capped TTLs; blocked names ge
     assert.equal(allowed.header.id, 99);
     assert.deepEqual([(allowed.answers[0] as any).address, allowed.answers[0].ttl], ["10.0.0.0", 60]);
     assert.deepEqual([resolver.stats.queries, resolver.stats.blocked], [3, 2]);
+
+    const [latest, , first] = queryLog.list();
+    assert.deepEqual(
+      [latest.name, latest.type, latest.action, latest.client, first.name, first.action, first.reason],
+      ["example.org", "A", "allow", "127.0.0.1", "www.bad.example", "block", "blocklist"]
+    );
+    assert.deepEqual(queryLog.list({ action: "block", search: "bad" }).map((e) => e.type), ["AAAA", "A"]);
   } finally {
     await Promise.all([server.close(), upstream.close()]);
   }
@@ -237,6 +260,10 @@ test("dashboard API toggles blocking, runs focus sessions and switches modes", a
   let state: BlockingState = { ...DEFAULT_STATE };
   const ensured: string[] = [];
   let savedKey = "";
+  let lists: DomainLists = { allow: [], block: [] };
+  const queryLog = createQueryLog();
+  queryLog.add({ time: 1, client: "192.168.1.50", name: "masswerk.at", type: "A", action: "block", reason: "jev", domain: "masswerk.at", score: 0.8, ms: 300 });
+  queryLog.add({ time: 2, client: "192.168.1.50", name: "github.com", type: "A", action: "allow", reason: "jev", domain: "github.com", score: 0.1, ms: 200 });
   let t = 1_000_000;
   const app = createDashboard({
     getState: () => state,
@@ -246,6 +273,10 @@ test("dashboard API toggles blocking, runs focus sessions and switches modes", a
     getApiKey: () => savedKey,
     setApiKey: async (k) => void (savedKey = k),
     envApiKey: "sk-env-1234",
+    getLists: () => lists,
+    setLists: async (l) => void (lists = l),
+    envLists: { allow: ["env.example"], block: [] },
+    queryLog,
     info: { model: "jev", upstreams: ["1.1.1.1"], waitTimeoutMs: 1500 },
     now: () => t,
   });
@@ -279,6 +310,17 @@ test("dashboard API toggles blocking, runs focus sessions and switches modes", a
   assert.doesNotMatch(JSON.stringify(saved.body), /secret/);
   assert.equal((await call("PUT", "/api/apikey", { key: "two words" })).code, 400);
   assert.equal((await call("PUT", "/api/apikey", { key: "" })).body.apiKey.source, "env");
+
+  const blocked = (await call("GET", "/api/queries?action=block")).body.queries;
+  assert.deepEqual(blocked.map((q: any) => [q.name, q.score]), [["masswerk.at", 0.8]]);
+  assert.equal((await call("GET", "/api/queries?limit=1")).body.queries[0].name, "github.com");
+
+  await call("PUT", "/api/lists/block/WWW.Masswerk.at.");
+  const allowed = (await call("PUT", "/api/lists/allow/masswerk.at")).body.lists;
+  assert.deepEqual(allowed, { allow: ["masswerk.at"], block: [], env: { allow: ["env.example"], block: [] } });
+  assert.deepEqual((await call("DELETE", "/api/lists/allow/masswerk.at")).body.lists.allow, []);
+  assert.equal((await call("PUT", "/api/lists/allow/localhost")).code, 400);
+  assert.equal((await call("PUT", "/api/lists/maybe/x.example")).code, 400);
 
   const page = await app.inject({ method: "GET", url: "/" });
   assert.match(page.body, /Focus DNS/);

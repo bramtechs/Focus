@@ -26,7 +26,7 @@
       color: var(--text);
       padding: 24px 16px;
     }
-    main { max-width: 560px; margin: 0 auto; display: grid; gap: 16px; }
+    main { max-width: 760px; margin: 0 auto; display: grid; gap: 16px; }
     h1 { font-size: 20px; margin: 0; }
     h2 { font-size: 14px; margin: 0 0 4px; }
     .card { background: var(--card); border-radius: 12px; padding: 16px; }
@@ -61,6 +61,35 @@
     .key-row input {
       flex: 1; min-width: 0; background: var(--bg); color: var(--text); border: 1px solid var(--line);
       border-radius: 8px; padding: 8px 10px; font: inherit; font-size: 14px;
+    }
+    button.small { padding: 3px 10px; font-size: 12px; }
+    .chips { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; min-height: 24px; }
+    .chip {
+      display: inline-flex; align-items: center; gap: 6px; padding: 3px 4px 3px 10px; border-radius: 999px;
+      background: var(--line); font-size: 13px;
+    }
+    .chip.env { padding-right: 10px; opacity: .7; }
+    .chip button { background: transparent; padding: 0 6px; font-size: 14px; color: var(--muted); }
+    .chip button:hover { color: var(--text); }
+    .list-title { margin-top: 12px; font-size: 13px; font-weight: 600; }
+    .log-controls { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; align-items: center; }
+    .log-controls select, .log-controls input[type=search] {
+      background: var(--bg); color: var(--text); border: 1px solid var(--line); border-radius: 8px;
+      padding: 6px 8px; font: inherit; font-size: 13px;
+    }
+    .log-controls input[type=search] { flex: 1; min-width: 140px; }
+    .log { margin-top: 10px; max-height: 520px; overflow-y: auto; font-size: 13px; }
+    .row {
+      display: grid; grid-template-columns: 64px minmax(0, 1fr) 110px 150px 64px; gap: 8px; align-items: center;
+      padding: 5px 2px; border-bottom: 1px solid var(--line);
+    }
+    .row .name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .row .type { color: var(--muted); font-size: 11px; margin-left: 4px; }
+    .row .time, .row .client { color: var(--muted); font-variant-numeric: tabular-nums; }
+    .row .pill { justify-self: start; font-weight: 500; }
+    @media (max-width: 600px) {
+      .row { grid-template-columns: minmax(0, 1fr) auto auto; }
+      .row .time, .row .client { display: none; }
     }
     #error { color: var(--bad); font-size: 13px; min-height: 1em; }
   </style>
@@ -152,6 +181,35 @@
       <div class="muted" id="info" style="margin-top:12px"></div>
     </section>
 
+    <section class="card">
+      <h2>Your lists</h2>
+      <div class="muted">Always allowed or always blocked, checked before the filters and Jev. Subdomains match too.</div>
+      <form class="key-row" id="listForm" autocomplete="off">
+        <input id="listInput" placeholder="example.com" spellcheck="false" />
+        <button type="submit" data-list="allow">Allow</button>
+        <button type="submit" data-list="block" class="danger">Block</button>
+      </form>
+      <div class="list-title">Allowed</div>
+      <div class="chips" id="allowList"></div>
+      <div class="list-title">Blocked</div>
+      <div class="chips" id="blockList"></div>
+    </section>
+
+    <section class="card">
+      <h2>Query log</h2>
+      <div class="muted">The latest lookups from every device using this server (kept in memory, cleared on restart).</div>
+      <div class="log-controls">
+        <select id="logAction">
+          <option value="">All</option>
+          <option value="block">Blocked</option>
+          <option value="allow">Allowed</option>
+        </select>
+        <input type="search" id="logSearch" placeholder="Filter by name or device IP" spellcheck="false" />
+        <button type="button" class="secondary small" id="logPause">Pause</button>
+      </div>
+      <div class="log" id="log"></div>
+    </section>
+
     <div id="error" role="alert"></div>
   </main>
 
@@ -204,8 +262,76 @@
       return text;
     }
 
+    const el = (tag, props = {}, ...children) => {
+      const node = Object.assign(document.createElement(tag), props);
+      node.append(...children);
+      return node;
+    };
+
+    function renderLists(lists) {
+      for (const name of ["allow", "block"]) {
+        const chips = [
+          ...lists[name].map((domain) =>
+            el("span", { className: "chip" }, domain,
+              el("button", { type: "button", title: "Remove", textContent: "×",
+                onclick: () => act("DELETE", `/api/lists/${name}/${encodeURIComponent(domain)}`) }))),
+          ...lists.env[name].map((domain) =>
+            el("span", { className: "chip env", title: `From FOCUS_${name.toUpperCase()}LIST` }, domain)),
+        ];
+        $(`${name}List`).replaceChildren(...(chips.length ? chips : [el("span", { className: "muted", textContent: "None" })]));
+      }
+    }
+
+    const REASONS = {
+      jev: "Jev", fallback: "built-in list", allowlist: "your allowlist", blocklist: "your blocklist",
+      ads: "ad filter", adult: "adult filter", disabled: "blocking off", pending: "classifying",
+      type: "not checked", local: "local name", ignored: "not checked", empty: "empty",
+    };
+    // Reasons where the user may want to override the decision.
+    const OVERRIDABLE = new Set(["jev", "fallback", "pending", "disabled", "ads", "adult"]);
+
+    function logRow(q) {
+      const time = new Date(q.time).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" });
+      let label = REASONS[q.reason] ?? q.reason;
+      if (q.score != null) label += ` ${Math.round(q.score * 100)}%`;
+      const pill = el("span", {
+        className: "pill " + (q.action === "block" ? "bad" : "good"),
+        textContent: `${q.action === "block" ? "Blocked" : "Allowed"} · ${label}`,
+        title: q.domain ? `Decided on ${q.domain} in ${q.ms} ms` : `${q.ms} ms`,
+      });
+      const target = q.domain || q.name;
+      const list = q.action === "block" ? "allow" : "block";
+      const button = OVERRIDABLE.has(q.reason)
+        ? el("button", {
+            type: "button", className: "small " + (list === "allow" ? "" : "danger"),
+            textContent: list === "allow" ? "Allow" : "Block", title: `${list === "allow" ? "Always allow" : "Always block"} ${target}`,
+            onclick: () => act("PUT", `/api/lists/${list}/${encodeURIComponent(target)}`).then(refreshLog),
+          })
+        : el("span");
+      return el("div", { className: "row" },
+        el("span", { className: "time", textContent: time }),
+        el("span", { className: "name", title: q.name }, q.name, el("span", { className: "type", textContent: q.type })),
+        el("span", { className: "client", textContent: q.client }),
+        pill, button);
+    }
+
+    let logPaused = false;
+    async function refreshLog() {
+      const params = new URLSearchParams({ limit: "300" });
+      if ($("logAction").value) params.set("action", $("logAction").value);
+      if ($("logSearch").value.trim()) params.set("search", $("logSearch").value.trim().toLowerCase());
+      try {
+        const { queries } = await api("GET", `/api/queries?${params}`);
+        $("log").replaceChildren(...(queries.length ? queries.map(logRow)
+          : [el("div", { className: "muted", textContent: "No lookups yet. Is a device using this server for DNS?" })]));
+      } catch (e) {
+        $("error").textContent = `Can't load the query log: ${e.message}`;
+      }
+    }
+
     function render(data) {
       current = data;
+      renderLists(data.lists);
       fetchedAt = Date.now();
       const { status } = data;
       const label = { on: "Blocking on", off: "Blocking off", focus: "Focus session" }[status.kind];
@@ -285,9 +411,26 @@
     $("keyRemove").onclick = () => act("PUT", "/api/apikey", { key: "" });
     $("modes").onchange = (e) => act("PUT", "/api/mode", { newDomainMode: e.target.value });
 
+    $("listForm").onsubmit = async (e) => {
+      e.preventDefault();
+      const domain = $("listInput").value.trim().toLowerCase().replace(/^https?:\/\//, "").replace(/[/:].*$/, "");
+      if (!domain) return;
+      await act("PUT", `/api/lists/${e.submitter.dataset.list}/${encodeURIComponent(domain)}`);
+      if (!$("error").textContent) $("listInput").value = "";
+    };
+    $("logAction").onchange = refreshLog;
+    $("logSearch").oninput = refreshLog;
+    $("logPause").onclick = () => {
+      logPaused = !logPaused;
+      $("logPause").textContent = logPaused ? "Resume" : "Pause";
+      if (!logPaused) refreshLog();
+    };
+
     refresh();
+    refreshLog();
     setInterval(tick, 1000);
     setInterval(refresh, 5000);
+    setInterval(() => !logPaused && !document.hidden && refreshLog(), 3000);
   </script>
 </body>
 </html>

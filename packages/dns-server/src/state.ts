@@ -26,6 +26,12 @@ export const DEFAULT_STATE: BlockingState = {
   filters: { ads: false, adult: false },
 };
 
+/** Allow/block lists edited from the dashboard (on top of FOCUS_ALLOWLIST / FOCUS_BLOCKLIST). */
+export interface DomainLists {
+  allow: string[];
+  block: string[];
+}
+
 export type BlockingStatus =
   | { kind: "on"; active: true }
   | { kind: "off"; active: false }
